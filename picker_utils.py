@@ -3,11 +3,49 @@
 Utility functions for the Seismic Picker
 Additional features and helpers
 """
-
-from obspy import read_events, UTCDateTime
-from obspy.core.event import Pick, WaveformStreamID
-import json
 import numpy as np
+from obspy import UTCDateTime, read_events
+import json
+
+
+def apply_preprocessing(stream, params):
+    """Applica filtri e correzioni a una copia dello stream"""
+    st = stream.copy()
+
+    if params.get("detrend"):
+        st.detrend("linear")
+
+    if params.get("taper", 0) > 0:
+        st.taper(max_percentage=params["taper"], type="cosine")
+
+    f_type = params.get("filter_type")
+    low = params.get("low_f", 1.0)
+    high = params.get("high_f", 20.0)
+
+    try:
+        if f_type == "bandpass" and low < high:
+            st.filter("bandpass", freqmin=low, freqmax=high)
+        elif f_type == "highpass":
+            st.filter("highpass", freqmin=low)
+        elif f_type == "lowpass":
+            st.filter("lowpass", freqmax=high)
+    except Exception as e:
+        print(f"Errore filtro: {e}")
+
+    return st
+
+
+def get_spectrum(trace):
+    """Calcola lo spettro di frequenza di una traccia"""
+    data = trace.data - np.mean(trace.data)
+    n = len(data)
+    delta = trace.stats.delta
+
+    # Calcolo FFT
+    freq = np.fft.rfftfreq(n, d=delta)
+    spec = np.abs(np.fft.rfft(data))
+
+    return freq, spec
 
 def load_picks_from_quakeml(filename):
     """

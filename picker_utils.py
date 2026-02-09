@@ -8,13 +8,23 @@ from obspy import UTCDateTime, read_events
 import json
 
 
+import numpy as np
+from obspy import UTCDateTime
+
+
 def apply_preprocessing(stream, params):
     """Applica filtri e correzioni a una copia dello stream"""
     st = stream.copy()
 
+    # Rimozione Media (Demean)
+    if params.get("demean"):
+        st.detrend("demean")
+
+    # Rimozione Trend (Linear)
     if params.get("detrend"):
         st.detrend("linear")
 
+    # Tapering
     if params.get("taper", 0) > 0:
         st.taper(max_percentage=params["taper"], type="cosine")
 
@@ -40,11 +50,8 @@ def get_spectrum(trace):
     data = trace.data - np.mean(trace.data)
     n = len(data)
     delta = trace.stats.delta
-
-    # Calcolo FFT
     freq = np.fft.rfftfreq(n, d=delta)
     spec = np.abs(np.fft.rfft(data))
-
     return freq, spec
 
 def load_picks_from_quakeml(filename):

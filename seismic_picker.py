@@ -1,11 +1,22 @@
 import dash
-from dash import dcc, html, Input, Output, State, callback_context
+from dash import dcc, html, Input, Output, State, callback_context as ctx
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from obspy import UTCDateTime
 import picker_utils as utils
 import numpy as np
 
+# Palette colori costante
+THEME = {
+    "bg": "#f0f2f6",
+    "sidebar": "#ffffff",
+    "text": "#2c3e50",
+    "grid": "#d1d9e6",
+    "btn": "#636EFA",
+}
+
+comp_colors = {"Z": "#ff4757", "N": "#2ed573", "E": "#1e90ff", "default": "#70a1ff"}
+phase_colors = {"P": "#ffa502", "S": "#ff4757", "default": "#747d8c"}
 
 class SeismicPicker:
     def __init__(self, stream):
@@ -30,109 +41,56 @@ class SeismicPicker:
 def create_dash_app(picker):
     app = dash.Dash(__name__)
 
-    # Colori Componenti
-    comp_colors = {"Z": "#e74c3c", "N": "#2ecc71", "E": "#3498db", "default": "#9b59b6"}
-    # Colori Fasi
-    phase_colors = {"P": "#f1c40f", "S": "#e67e22", "default": "#1abc9c"}
-
-    themes = {
-        "light": {
-            "bg": "#ffffff",
-            "sidebar": "#f1f2f6",
-            "text": "#2f3542",
-            "template": "plotly_white",
-            "grid": "#dcdde1",
-            "input_bg": "#ffffff",
-        },
-        "dark": {
-            "bg": "#1e272e",
-            "sidebar": "#2f3542",
-            "text": "#E759F4FF",
-            "template": "plotly_dark",
-            "grid": "#57606f",
-            "input_bg": "#a5d4ff",
-        },
-    }
-
     app.layout = html.Div(
         id="main-container",
         children=[
-            # Contenitore per il CSS dinamico (risolve il problema dei Dropdown bianchi)
-            html.Div(id="css-container"),
-            # Header
             html.Div(
                 [
                     html.H3(
-                        "Seismic Picker v2.5",
+                        "Seismic Picker",
                         style={"margin": "0", "padding": "10px 20px"},
                     )
                 ],
                 id="header",
             ),
-            # Layout Principale
             html.Div(
                 [
                     # SIDEBAR
                     html.Div(
                         [
-                            html.Label("Tema:"),
-                            dcc.Dropdown(
-                                id="theme-sel",
-                                options=[
-                                    {"label": "Light Mode", "value": "light"},
-                                    {"label": "Dark Mode", "value": "dark"},
-                                ],
-                                value="light",
-                                clearable=False,
-                            ),
-                            html.Hr(),
                             html.Label("Visualizzazione:"),
                             dcc.RadioItems(
                                 id="view-type",
                                 options=[
                                     {"label": " Waveform", "value": "wave"},
-                                    {"label": " Spettro FFT", "value": "spec"},
+                                    {"label": " Spettro", "value": "spec"},
                                 ],
                                 value="wave",
-                                labelStyle={"display": "block"},
-                            ),
-                            html.Br(),
-                            html.Label("Colori Tracce:"),
-                            dcc.RadioItems(
-                                id="color-mode",
-                                options=[
-                                    {
-                                        "label": " Unico (Bianco/Nero)",
-                                        "value": "single",
-                                    },
-                                    {"label": " Per Componente (ZNE)", "value": "comp"},
-                                ],
-                                value="comp",
-                                labelStyle={"display": "block"},
+                                className="dash-radioitem",
                             ),
                             html.Hr(),
-                            html.Label("Preprocessing:"),
-                            dcc.Checklist(
-                                id="p-demean",
-                                options=[{"label": " Demean", "value": "y"}],
-                                value=["y"],
+                            html.Label("Fase Attiva:"),
+                            dcc.Dropdown(
+                                id="ph-sel",
+                                options=[
+                                    {"label": "P", "value": "P"},
+                                    {"label": "S", "value": "S"},
+                                    {"label": "Altro", "value": "custom"},
+                                ],
+                                value="P",
                             ),
-                            dcc.Checklist(
-                                id="p-detrend",
-                                options=[{"label": " Detrend", "value": "y"}],
-                                value=["y"],
+                            dcc.Input(
+                                id="ph-custom",
+                                placeholder="Inserisci fase...",
+                                style={"marginTop": "5px"},
                             ),
-                            html.Label(
-                                "Filtro:",
-                                style={"marginTop": "10px", "display": "block"},
-                            ),
+                            html.Hr(),
+                            html.Label("Filtro:"),
                             dcc.Dropdown(
                                 id="f-type",
                                 options=[
                                     {"label": "Nessuno", "value": "none"},
-                                    {"label": "Passa-Banda", "value": "bandpass"},
-                                    {"label": "Passa-Alto", "value": "highpass"},
-                                    {"label": "Passa-Basso", "value": "lowpass"},
+                                    {"label": "Passa-banda", "value": "bandpass"},
                                 ],
                                 value="none",
                             ),
@@ -141,57 +99,61 @@ def create_dash_app(picker):
                                     dcc.Input(
                                         id="f-low",
                                         type="number",
-                                        value=1.0,
+                                        value=1,
                                         style={"width": "45%"},
                                     ),
                                     dcc.Input(
                                         id="f-high",
                                         type="number",
-                                        value=20.0,
-                                        style={"width": "45%", "marginLeft": "5%"},
+                                        value=10,
+                                        style={"width": "45%", "marginLeft": "10%"},
                                     ),
                                 ],
                                 style={"marginTop": "5px"},
                             ),
                             html.Hr(),
-                            html.Label("Guadagno (Vertical Zoom):"),
-                            dcc.Slider(
-                                id="v-zoom",
-                                min=0.5,
-                                max=100,
-                                value=1,
-                                step=0.5,
-                                marks={1: "1x", 50: "50x", 100: "100x"},
+                            html.Label("Processing:"),
+                            dcc.Checklist(
+                                id="p-demean",
+                                options=[{"label": " Demean", "value": "y"}],
+                                value=["y"],
+                                className="dash-checklist",
+                            ),
+                            dcc.Checklist(
+                                id="p-detrend",
+                                options=[{"label": " Detrend", "value": "y"}],
+                                value=["y"],
+                                className="dash-checklist",
                             ),
                             html.Hr(),
-                            html.Label("Fase:"),
+                            html.Label("Colori:"),
                             dcc.RadioItems(
-                                id="ph-sel",
+                                id="color-mode",
                                 options=[
-                                    {"label": " P", "value": "P"},
-                                    {"label": " S", "value": "S"},
-                                    {"label": " Custom", "value": "custom"},
+                                    {"label": " Componente", "value": "comp"},
+                                    {"label": " Mono", "value": "mono"},
                                 ],
-                                value="P",
-                                inline=True,
+                                value="comp",
+                                className="dash-radioitem",
                             ),
-                            dcc.Input(
-                                id="ph-custom",
-                                type="text",
-                                placeholder="es. Pn",
-                                style={"width": "100%", "marginTop": "5px"},
+                            html.Hr(),
+                            html.Label("V-Zoom:"),
+                            dcc.Slider(
+                                id="v-zoom",
+                                min=1,
+                                max=100,
+                                value=1,
+                                marks={1: "1x", 100: "100x"},
                             ),
-                            html.Br(),
                             html.Br(),
                             html.Button(
-                                "Esporta JSON", id="btn-exp", className="custom-button"
+                                "Esporta picking", id="btn-exp", className="custom-button"
                             ),
                         ],
                         id="sidebar",
                         style={
                             "width": "260px",
                             "padding": "20px",
-                            "flexShrink": "0",
                             "height": "calc(100vh - 50px)",
                             "overflowY": "auto",
                         },
@@ -201,26 +163,24 @@ def create_dash_app(picker):
                         [
                             html.Div(
                                 [
-                                    html.Div(
-                                        [
-                                            html.Label("Stazione:"),
-                                            dcc.Dropdown(
-                                                id="sta-sel",
-                                                options=[
-                                                    {"label": s["id"], "value": i}
-                                                    for i, s in enumerate(
-                                                        picker.stations
-                                                    )
-                                                ],
-                                                value=0,
-                                                style={"width": "250px"},
-                                            ),
+                                    dcc.Dropdown(
+                                        id="sta-sel",
+                                        options=[
+                                            {"label": s["id"], "value": i}
+                                            for i, s in enumerate(picker.stations)
                                         ],
-                                        style={"marginRight": "30px"},
+                                        value=0,
+                                        style={"width": "250px"},
                                     ),
                                     html.Div(
                                         [
-                                            html.Label("Zoom Orizzontale:"),
+                                            html.Label(
+                                                "H-Zoom:",
+                                                style={
+                                                    "marginLeft": "20px",
+                                                    "marginRight": "10px",
+                                                },
+                                            ),
                                             dcc.Slider(
                                                 id="h-zoom",
                                                 min=1,
@@ -230,7 +190,11 @@ def create_dash_app(picker):
                                                 marks={1: "1x", 10: "10x", 20: "20x"},
                                             ),
                                         ],
-                                        style={"flexGrow": "1"},
+                                        style={
+                                            "flexGrow": "1",
+                                            "display": "flex",
+                                            "alignItems": "center",
+                                        },
                                     ),
                                 ],
                                 style={
@@ -239,11 +203,7 @@ def create_dash_app(picker):
                                     "alignItems": "center",
                                 },
                             ),
-                            dcc.Graph(
-                                id="plot",
-                                style={"flexGrow": "1"},
-                                config={"displaylogo": False},
-                            ),
+                            dcc.Graph(id="plot", style={"flexGrow": "1"}),
                             html.Div(
                                 id="table-out",
                                 style={
@@ -253,7 +213,6 @@ def create_dash_app(picker):
                                 },
                             ),
                         ],
-                        id="main-content",
                         style={
                             "flexGrow": "1",
                             "display": "flex",
@@ -265,7 +224,6 @@ def create_dash_app(picker):
             ),
             dcc.Store(id="pick-store", data=[]),
         ],
-        style={"height": "100vh", "margin": "0", "overflow": "hidden"},
     )
 
     @app.callback(
@@ -273,13 +231,8 @@ def create_dash_app(picker):
             Output("plot", "figure"),
             Output("pick-store", "data"),
             Output("table-out", "children"),
-            Output("main-container", "style"),
-            Output("sidebar", "style"),
-            Output("header", "style"),
-            Output("css-container", "children"),
         ],
         [
-            Input("theme-sel", "value"),
             Input("sta-sel", "value"),
             Input("h-zoom", "value"),
             Input("v-zoom", "value"),
@@ -298,8 +251,8 @@ def create_dash_app(picker):
             State("pick-store", "data"),
         ],
     )
+
     def update_app(
-        theme_name,
         sta_idx,
         h_zoom,
         v_zoom,
@@ -315,9 +268,7 @@ def create_dash_app(picker):
         p_cust,
         picks,
     ):
-        ctx = callback_context
-        t = themes[theme_name]
-        active_ph = p_cust if p_sel == "custom" and p_cust else p_sel
+        active_ph = p_cust if p_sel == "custom" else p_sel
 
         # 1. Processing
         p_params = {
@@ -339,6 +290,7 @@ def create_dash_app(picker):
             and view == "wave"
         ):
             p = click["points"][0]
+            # La customdata viene passata nel momento della creazione del trace
             net, sta, cha = p["customdata"]
             tr = picker.original_stream.select(network=net, station=sta, channel=cha)[0]
             abs_t = tr.stats.starttime + p["x"]
@@ -364,8 +316,6 @@ def create_dash_app(picker):
             ch_last = tr.stats.channel[-1].upper()
             line_color = (
                 comp_colors.get(ch_last, comp_colors["default"])
-                if c_mode == "comp"
-                else ("#ffffff" if theme_name == "dark" else "#000000")
             )
 
             if view == "wave":
@@ -377,10 +327,10 @@ def create_dash_app(picker):
                         mode="lines",
                         name=tr.stats.channel,
                         line=dict(color=line_color, width=1),
-                        customdata=[
-                            [tr.stats.network, tr.stats.station, tr.stats.channel]
-                        ]
-                        * len(x),
+                        customdata=np.array(
+                            [[tr.stats.network, tr.stats.station, tr.stats.channel]]
+                            * len(x)
+                        ),
                     ),
                     row=i,
                     col=1,
@@ -391,7 +341,7 @@ def create_dash_app(picker):
                     range=[-max_amp / v_zoom, max_amp / v_zoom],
                     row=i,
                     col=1,
-                    gridcolor=t["grid"],
+                    gridcolor=THEME["grid"],
                 )
 
                 yref_name = f"y{i if i > 1 else ''} domain"
@@ -412,11 +362,12 @@ def create_dash_app(picker):
                             text=pk["phase"],
                             showarrow=False,
                             font=dict(color=p_col, size=11),
-                            bgcolor=t["bg"],
+                            bgcolor=THEME["bg"],
                             row=i,
                             col=1,
                         )
             else:
+                # Modalità Spettro
                 freq, spec = utils.get_spectrum(tr)
                 fig.add_trace(
                     go.Scatter(
@@ -435,52 +386,25 @@ def create_dash_app(picker):
                     row=i,
                     col=1,
                     title_text="Amp",
-                    gridcolor=t["grid"],
+                    gridcolor=THEME["grid"],
                 )
                 fig.update_xaxes(
-                    title_text="Freq (Hz)", row=i, col=1, gridcolor=t["grid"]
+                    title_text="Freq (Hz)", row=i, col=1, gridcolor=THEME["grid"]
                 )
 
         if view == "wave":
             dur = traces[0].stats.endtime - traces[0].stats.starttime
             fig.update_xaxes(
-                range=[0, dur / h_zoom], title_text="Secondi", gridcolor=t["grid"]
+                range=[0, dur / h_zoom], title_text="Secondi", gridcolor=THEME["grid"]
             )
 
         fig.update_layout(
-            template=t["template"],
+            template="plotly_white",
             showlegend=False,
             margin=dict(l=60, r=20, t=30, b=50),
             paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(255,255,255,0.4)",
         )
-
-        # FIX dei colori Dropdown e Input tramite CSS iniettato
-        dropdown_css = f"""
-        <style>
-            .Select-control, .Select-menu-outer, .VirtualizedSelectFocusedOption {{ 
-                background-color: {t["input_bg"]} !important; color: {t["text"]} !important; 
-            }}
-            .Select-value-label, .Select-placeholder {{ color: {t["text"]} !important; }}
-            input {{ background-color: {t["input_bg"]} !important; color: {t["text"]} !important; border: 1px solid {t["grid"]}; }}
-            .custom-button {{ background-color: #3498db; color: white; border: none; padding: 10px; cursor: pointer; border-radius: 4px; width: 100%; }}
-            .custom-button:hover {{ background-color: #2980b9; }}
-        </style>
-        """
-
-        container_style = {
-            "backgroundColor": t["bg"],
-            "color": t["text"],
-            "transition": "0.3s",
-        }
-        sidebar_style = {
-            "backgroundColor": t["sidebar"],
-            "borderRight": f"1px solid {t['grid']}",
-        }
-        header_style = {
-            "borderBottom": f"1px solid {t['grid']}",
-            "backgroundColor": t["sidebar"],
-        }
 
         table = html.Table(
             [
@@ -503,20 +427,12 @@ def create_dash_app(picker):
             ],
             style={
                 "width": "100%",
-                "color": t["text"],
+                "color": THEME["text"],
                 "borderCollapse": "collapse",
                 "fontSize": "12px",
             },
         )
 
-        return (
-            fig,
-            picks,
-            table,
-            container_style,
-            sidebar_style,
-            header_style,
-            dcc.Markdown(dropdown_css, dangerously_allow_html=True),
-        )
+        return fig, picks, table
 
     return app

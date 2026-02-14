@@ -210,6 +210,7 @@ class SeismicPickerQT(QMainWindow):
         self.f_low.valueChanged.connect(self.update_plots)
         self.f_high.valueChanged.connect(self.update_plots)
         self.v_zoom.valueChanged.connect(self.update_gain)
+        self.win.scene().sigMouseClicked.connect(self.on_plot_click)
 
     def apply_system_theme(self):
         palette = self.palette()
@@ -450,7 +451,6 @@ class SeismicPickerQT(QMainWindow):
             self.win.nextRow()
             current_row += 1
 
-        self.win.scene().sigMouseClicked.connect(self.on_plot_click)
         self.update_gain()
 
     def _add_visual_pick(self, plot, x_pos, label):
@@ -484,6 +484,7 @@ class SeismicPickerQT(QMainWindow):
                     )
                     self.update_table()
                     self.update_plots()
+                    event.accept()
                     break
 
     def update_table(self):

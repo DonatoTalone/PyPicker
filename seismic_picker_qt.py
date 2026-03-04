@@ -27,11 +27,13 @@ from PyQt6.QtGui import QPalette
 import pyqtgraph as pg
 from obspy import UTCDateTime, read, Stream
 import picker_utils_qt as utils
+from PyQt6.QtGui import QKeySequence 
 
 
 class SeismicPickerQT(QMainWindow):
     def __init__(self, stream=None):
         super().__init__()
+        self.config = utils.load_config()
         self.setWindowTitle("PyPicker")
         self.resize(1200, 900)
 
@@ -39,6 +41,10 @@ class SeismicPickerQT(QMainWindow):
         self.picks = []
         self.plots = []
         self.stations = []
+
+        self.active_pick_item = None  # Il widget visuale (regione)
+        self.pick_start_point = None  # Punto (x,y) del primo click
+        self.current_picking_data = None  # Dati temporanei del pick
 
         self.init_ui()
         self.apply_system_theme()
@@ -210,8 +216,47 @@ class SeismicPickerQT(QMainWindow):
         self.f_low.valueChanged.connect(self.update_plots)
         self.f_high.valueChanged.connect(self.update_plots)
         self.v_zoom.valueChanged.connect(self.update_gain)
-        self.win.scene().sigMouseClicked.connect(self.on_plot_click)
+        self.win.scene().sigMouseMoved.connect(self.on_mouse_move)
+        self.win.scene().sigMouseClicked.connect(self.on_mouse_click_release)
 
+    def setup_shortcuts(self):
+        sc = self.config.get("shortcuts", {})
+        self.action_map = {
+            "next_station": self.next_station,
+            "prev_station": self.prev_station,
+            "phase_p": lambda: self.ph_sel.setCurrentText("P"),
+            "phase_s": lambda: self.ph_sel.setCurrentText("S"),
+            "phase_custom": lambda: self.ph_sel.setCurrentText("Custom"),
+            "reset_view": self.reset_view,
+            "save_sac": self.save_to_sac,
+            "export_csv": self.export_csv,
+            "toggle_filter": self.toggle_filter,
+        }
+        self.key_to_func = {}
+        for action_name, key_string in sc.items():
+            if action_name in self.action_map:
+                seq = QKeySequence(key_string)
+                if not seq.isEmpty():
+                    key_code = seq[
+                        0
+                    ].toCombined()
+                    self.key_to_func[key_code] = self.action_map[action_name]
+
+        def keyPressEvent(self, event):
+            if self.ph_custom.hasFocus():
+                super().keyPressEvent(event)
+                return
+
+            key_event = event.key() | int(event.modifiers())
+            if key_event in self.key_to_func:
+                self.key_to_func[key_event]()
+            else:
+                super().keyPressEvent(event)
+
+    def toggle_filter(self):
+        current = self.filt_sel.currentIndex()
+        self.filt_sel.setCurrentIndex(3 if current == 0 else 0)
+    
     def apply_system_theme(self):
         palette = self.palette()
         bg = palette.color(QPalette.ColorRole.Window)
@@ -381,6 +426,8 @@ class SeismicPickerQT(QMainWindow):
             self.win.addItem(title, row=current_row, col=0)
             current_row += 1
 
+            colors_cfg = self.config.get("colors", {})
+
             for tr in traces:
                 p = self.win.addPlot(row=current_row, col=0)
                 current_row += 1
@@ -391,19 +438,17 @@ class SeismicPickerQT(QMainWindow):
                     p.setXLink(first_p)
 
                 chan_name = tr.stats.channel.upper()[-3:]
-                if "Z" in chan_name:
-                    ch = "Z"
-                elif "N" in chan_name:
-                    ch = "N"
-                elif "E" in chan_name:
-                    ch = "E"
+                if self.color_mode.currentIndex() == 0:
+                    if "Z" in chan_name: 
+                        color = colors_cfg.get("Z", "#e74c3c")
+                    elif "N" in chan_name: 
+                        color = colors_cfg.get("N", "#f1c40f")
+                    elif "E" in chan_name: 
+                        color = colors_cfg.get("E", "#3498db")
+                    else: 
+                        color = colors_cfg.get("other", "gray")
                 else:
-                    ch = "gray"
-                color = (
-                    {"Z": "#e74c3c", "N": "#f1c40f", "E": "#3498db"}.get(ch, "gray")
-                    if self.color_mode.currentIndex() == 0
-                    else self.fg_color
-                )
+                    color = self.fg_color
 
                 if self.view_wave.isChecked():
                     max_duration = tr.stats.npts * tr.stats.delta
@@ -429,12 +474,18 @@ class SeismicPickerQT(QMainWindow):
                         if pk["sta"] == tr.stats.station:
                             t_rel = UTCDateTime(pk["abs_t"]) - tr.stats.starttime
                             if 0 <= t_rel <= max_duration:
-                                self._add_visual_pick(p, t_rel, pk["phase"])
+                                # Passiamo l'incertezza salvata
+                                unc = pk.get("uncertainty", 0.0)
+                                self._add_visual_pick(p, t_rel, pk["phase"], unc)
                 else:
                     f, s = utils.get_spectrum(tr)
-                    f_max = tr.stats.sampling_rate / 2
+                    #f_max = tr.stats.sampling_rate / 2
+                    f_max = max(f)
+                    s_max = max(s)
                     p.setLimits(xMin=0, xMax=f_max)
                     p.setXRange(0, f_max, padding=0)
+                    p.setLimits(yMin=0, yMax=s_max)
+                    p.setXRange(0, s_max, padding=0)
                     p.plot(f, s, pen=pg.mkPen(color))
                     scale = self.spec_scale.currentText()
                     p.setLogMode("Log" in scale.split("-")[0], "Log" in scale.split("-")[1])
@@ -453,51 +504,118 @@ class SeismicPickerQT(QMainWindow):
 
         self.update_gain()
 
-    def _add_visual_pick(self, plot, x_pos, label):
-        color = "#8e44ad"
-        line = pg.InfiniteLine(
-            pos=x_pos,
-            angle=90,
-            pen=pg.mkPen(color, width=1.5, style=Qt.PenStyle.DashLine),
-        )
-        plot.addItem(line)
-        text = pg.TextItem(label, color=color, anchor=(0, 1))
-        text.setPos(x_pos, 0)
-        plot.addItem(text)
+    def on_mouse_click_release(self, event):
+        """Gestisce l'inizio (press) e la fine (release) del picking"""
+        # Se abbiamo un pick attivo, il 'click' (che pyqtgraph emette al rilascio) lo conclude
+        if self.active_pick_item:
+            # Salviamo il pick definitivo
+            uncertainty = (
+                self.active_pick_item.getRegion()[1]
+                - self.active_pick_item.getRegion()[0]
+            ) / 2
+            self.current_picking_data["uncertainty"] = round(uncertainty, 4)
+            self.picks.append(self.current_picking_data)
 
-    def on_plot_click(self, event):
+            # Pulizia
+            for p in self.plots:
+                p.removeItem(self.active_pick_item)
+
+            self.active_pick_item = None
+            self.current_picking_data = None
+            self.pick_start_point = None
+
+            self.update_table()
+            self.update_plots()
+            return
+
+        # Se non c'è un pick attivo, verifichiamo se abbiamo cliccato su un plot per iniziarne uno
         if event.button() == Qt.MouseButton.LeftButton and self.view_wave.isChecked():
             for p in self.plots:
                 if p.sceneBoundingRect().contains(event.scenePos()):
                     mouse_point = p.vb.mapSceneToView(event.scenePos())
+                    self.pick_start_point = event.scenePos()
+
                     phase = self.ph_sel.currentText()
                     if phase == "Custom":
                         phase = self.ph_custom.text() or ""
+
                     abs_t = p.meta["st"] + mouse_point.x()
-                    self.picks.append(
-                        {
-                            "sta": p.meta["sta"],
-                            "cha_source": p.meta["cha"],
-                            "phase": phase,
-                            "abs_t": str(abs_t),
-                        }
+
+                    # Creiamo i dati temporanei
+                    self.current_picking_data = {
+                        "sta": p.meta["sta"],
+                        "cha_source": p.meta["cha"],
+                        "phase": phase,
+                        "abs_t": str(abs_t),
+                        "t_rel": mouse_point.x(),
+                    }
+
+                    # Creiamo l'elemento visuale (una regione centrata sul click)
+                    self.active_pick_item = pg.LinearRegionItem(
+                        values=[mouse_point.x(), mouse_point.x()],
+                        brush=pg.mkBrush(142, 68, 173, 100),  # Viola semitrasparente
+                        movable=False,
                     )
-                    self.update_table()
-                    self.update_plots()
-                    event.accept()
+                    p.addItem(self.active_pick_item)
                     break
 
+    def on_mouse_move(self, pos):
+        """Aggiorna l'incertezza in base allo spostamento verticale"""
+        if self.active_pick_item and self.pick_start_point:
+            # Calcoliamo lo spostamento verticale in pixel
+            diff_y = abs(pos.y() - self.pick_start_point.y())
+
+            # Parametro di sensibilità: 100px = 0.5 secondi (regolabile)
+            # Meglio ancora: proporzionale alla scala temporale visibile
+            view_range = self.plots[0].viewRange()[0]
+            time_width = view_range[1] - view_range[0]
+            uncertainty = (diff_y / 500) * time_width
+
+            t_center = self.current_picking_data["t_rel"]
+            self.active_pick_item.setRegion(
+                [t_center - uncertainty, t_center + uncertainty]
+            )
+
+    def _add_visual_pick(self, plot, x_pos, label, uncertainty=0.0):
+        c_cfg = self.config.get("colors", {})
+        main_color = c_cfg.get("pick_line", "#8e44ad")
+        alpha = c_cfg.get("pick_area_alpha", 50)
+
+        if uncertainty > 0:
+            q_color = pg.mkColor(main_color)
+            q_color.setAlpha(alpha)
+
+            region = pg.LinearRegionItem(
+                values=[x_pos - uncertainty, x_pos + uncertainty],
+                brush=pg.mkBrush(q_color),
+                pen=pg.mkPen(None),
+                movable=False,
+            )
+            plot.addItem(region)
+
+        line = pg.InfiniteLine(
+            pos=x_pos,
+            angle=90,
+            pen=pg.mkPen(main_color, width=1.5, style=Qt.PenStyle.DashLine),
+        )
+        plot.addItem(line)
+
     def update_table(self):
+        self.table.setColumnCount(6)  # Aumentiamo le colonne
+        self.table.setHorizontalHeaderLabels(
+            ["Sta", "Cha", "Phase", "Time", "Unc (s)", "Action"]
+        )
         self.table.setRowCount(len(self.picks))
         for i, pk in enumerate(self.picks):
             self.table.setItem(i, 0, QTableWidgetItem(pk["sta"]))
             self.table.setItem(i, 1, QTableWidgetItem(pk["cha_source"]))
             self.table.setItem(i, 2, QTableWidgetItem(pk["phase"]))
             self.table.setItem(i, 3, QTableWidgetItem(pk["abs_t"][-15:]))
+            self.table.setItem(i, 4, QTableWidgetItem(str(pk.get("uncertainty", 0.0))))
             btn = QPushButton("Remove")
             btn.setStyleSheet("background-color: #a2292b; color: white;")
             btn.clicked.connect(lambda chk, idx=i: self.delete_pick(idx))
-            self.table.setCellWidget(i, 4, btn)
+            self.table.setCellWidget(i, 5, btn)
 
     def delete_pick(self, idx):
         if 0 <= idx < len(self.picks):

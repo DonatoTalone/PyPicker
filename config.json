@@ -1,0 +1,26 @@
+{
+    "shortcuts": {
+        "next_station": "Right",
+        "prev_station": "Left",
+        "phase_p": "P",
+        "phase_s": "S",
+        "phase_custom": "C",
+        "reset_view": "R",
+        "save_sac": "Ctrl+S",
+        "export_csv": "Ctrl+E",
+        "toggle_filter": "F"
+    },
+    "colors": {
+        "Z": "#e74c3c",
+        "N": "#f1c40f",
+        "E": "#3498db",
+        "other": "#7f8c8d",
+        "pick_line": "#8e44ad",
+        "pick_area_alpha": 60
+    },
+    "defaults": {
+        "low_f": 1.0,
+        "high_f": 20.0,
+        "filter_type": "BandPass (f1 and f2)"
+    }
+}

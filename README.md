@@ -43,7 +43,7 @@ Use the provided requirements.txt file:
 pip install -r requirements.txt
 ```
 
-Note: The requirements include PyQt6, pyqtgraph, obspy, and numpy.
+Note: The requirements include PyQt6, pyqtgraph, and numpy. But not Obspy due to likely errors appearing during the installation depending on the linux distribution. INSTALL OBSPY BY YOURSELF TO RUN THE PICKER!
 
 ## How to Use
 

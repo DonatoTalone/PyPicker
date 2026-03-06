@@ -1,10 +1,11 @@
 {
     "shortcuts": {
-        "next_station": "Right",
-        "prev_station": "Left",
+        "next_station": "D",
+        "prev_station": "A",
         "phase_p": "P",
         "phase_s": "S",
         "phase_custom": "C",
+        "phase_rotate": "Q",
         "reset_view": "R",
         "save_sac": "Ctrl+S",
         "export_csv": "Ctrl+E",

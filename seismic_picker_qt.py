@@ -26,7 +26,6 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPalette, QKeySequence, QShortcut
 from obspy import UTCDateTime, read, Stream
-
 import picker_utils_qt as utils
 
 

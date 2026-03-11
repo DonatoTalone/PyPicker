@@ -1,0 +1,10 @@
+{
+    "title": "PyPicker - Seismic Waveform Picker",
+    "description": "A simple Python-based GUI for seismic waveform visualization, frequency analysis, and manual arrival picking",
+    "creators": [
+        {
+            "name": "Talone, Donato",
+            "affiliation": "University of Chieti-Pescara G. D'Annunzio"
+        }
+    ]
+}

@@ -1,6 +1,6 @@
 # PyPicker - Seismic Waveform Picker
 
-A professional Python-based GUI for seismic waveform visualization, frequency analysis, and manual arrival picking. It utilizes **PyQt6** for the interface, **PyQtGraph** for high-performance plotting, and **ObsPy** for seismic data handling.
+A simple Python-based GUI for seismic waveform visualization, frequency analysis, and manual arrival picking. It utilizes **PyQt6** for the interface, **PyQtGraph** for high-performance plotting, and **ObsPy** for seismic data handling.
 
 ## Features
 - **Waveform Visualization:** Load SAC, MSEED, and other formats supported by ObsPy.
@@ -18,6 +18,9 @@ A professional Python-based GUI for seismic waveform visualization, frequency an
 - `picker_utils_qt.py`: Utility functions for signal processing, file I/O, and SAC header management.
 - `config.json`: Configuration file for shortcuts and visual themes.
 - `requirements.txt`: List of Python dependencies.
+
+## License
+The code is released under [GNU General Public License](./LICENSE)
 
 ## Installation
 
@@ -43,7 +46,7 @@ Use the provided requirements.txt file:
 pip install -r requirements.txt
 ```
 
-Note: The requirements include PyQt6, pyqtgraph, and numpy. But not Obspy due to likely errors appearing during the installation depending on the linux distribution. INSTALL OBSPY BY YOURSELF TO RUN THE PICKER!
+Note: The requirements include PyQt6, Obspy, pyqtgraph, and numpy.
 
 ## How to Use
 

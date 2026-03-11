@@ -2,4 +2,10 @@ README_files
 README.html
 PREPROCESSING_GUIDE_files
 PREPROCESSING_GUIDE.html
+PyPicker.spec
 __pycache__
+build
+dist
+seismic_picker_qt.build
+seismic_picker_qt.dist
+CITATION.cff

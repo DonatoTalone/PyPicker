@@ -3,9 +3,12 @@ README.html
 PREPROCESSING_GUIDE_files
 PREPROCESSING_GUIDE.html
 PyPicker.spec
+seismic_picker_qt.spec
+pyinstaller_hooks
 __pycache__
 build
 dist
 seismic_picker_qt.build
 seismic_picker_qt.dist
 CITATION.cff
+.obspyck_repo

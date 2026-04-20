@@ -22,12 +22,64 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QScrollArea,
     QGroupBox,
+    QDialog,
+    QFormLayout,
+    QDialogButtonBox,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPalette, QKeySequence, QShortcut
 from obspy import UTCDateTime, read, Stream
 import picker_utils_qt as utils
 
+class PickDetailsDialog(QDialog):
+    def __init__(self, parent=None, default_phase="P", custom_phase=""):
+        super().__init__(parent)
+        self.setWindowTitle("Pick Details")
+        self.setModal(True)
+
+        layout = QFormLayout(self)
+
+        self.phase_cb = QComboBox()
+        self.phase_cb.addItems(["P", "S", "Custom"])
+        self.phase_cb.setCurrentText(default_phase if default_phase in ["P", "S"] else "Custom")
+        
+        self.custom_phase_le = QLineEdit()
+        self.custom_phase_le.setText(custom_phase)
+        self.custom_phase_le.setVisible(self.phase_cb.currentText() == "Custom")
+        self.phase_cb.currentTextChanged.connect(
+            lambda t: self.custom_phase_le.setVisible(t == "Custom")
+        )
+
+        self.polarity_cb = QComboBox()
+        self.polarity_cb.addItems(["undecidable", "positive", "negative"])
+        self.polarity_cb.setCurrentText("undecidable")
+
+        self.onset_cb = QComboBox()
+        self.onset_cb.addItems(["Unknown", "Emergent", "Impulsive"])
+        self.onset_cb.setCurrentText("Unknown")
+
+        layout.addRow("Phase:", self.phase_cb)
+        layout.addRow("Custom Phase:", self.custom_phase_le)
+        layout.addRow("Polarity:", self.polarity_cb)
+        layout.addRow("Onset:", self.onset_cb)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            Qt.Orientation.Horizontal, self
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
+
+    def get_data(self):
+        phase = self.phase_cb.currentText()
+        if phase == "Custom":
+            phase = self.custom_phase_le.text()
+        return {
+            "phase": phase,
+            "polarity": self.polarity_cb.currentText(),
+            "onset": self.onset_cb.currentText()
+        }
 
 class SeismicPickerQT(QMainWindow):
     def __init__(self, stream=None):
@@ -46,6 +98,7 @@ class SeismicPickerQT(QMainWindow):
         self.active_pick_item = None  # The visual LinearRegionItem
         self.pick_start_point = None  # Mouse coordinate (px)
         self.current_picking_data = None
+        self.last_mouse_pos = None    # Last mouse scene position
 
         self.init_ui()
         self.setup_shortcuts()
@@ -142,19 +195,33 @@ class SeismicPickerQT(QMainWindow):
 
         left_sidebar.addStretch()
 
-        self.btn_save_csv = QPushButton("Export CSV")
-        self.btn_save_csv.clicked.connect(self.export_csv)
-        self.btn_save_csv.setStyleSheet(
+        left_sidebar.addWidget(QLabel("<b>Sort Stations:</b>"))
+        self.sort_sel = QComboBox()
+        self.sort_sel.addItems(["Original", "By Distance", "By P/S Arrival"])
+        self.sort_sel.currentIndexChanged.connect(self.sort_stations)
+        left_sidebar.addWidget(self.sort_sel)
+
+        self.btn_import_picks = QPushButton("Import Picks")
+        self.btn_import_picks.clicked.connect(self.import_picks)
+        self.btn_import_picks.setStyleSheet(
+            "font-weight: bold; background-color: #e67e22; color: white;"
+        )
+        
+        self.btn_export_picks = QPushButton("Export Picks")
+        self.btn_export_picks.clicked.connect(self.export_picks)
+        self.btn_export_picks.setStyleSheet(
             "font-weight: bold; background-color: #1ea54c; color: white;"
         )
+
+        left_sidebar.addWidget(self.btn_import_picks)
+        left_sidebar.addWidget(self.btn_export_picks)
 
         self.btn_save_sac = QPushButton("Save as SAC")
         self.btn_save_sac.clicked.connect(self.save_to_sac)
         self.btn_save_sac.setStyleSheet(
             "font-weight: bold; background-color: #1ea54c; color: white;"
         )
-
-        left_sidebar.addWidget(self.btn_save_csv)
+        
         left_sidebar.addWidget(self.btn_save_sac)
         left_group.setLayout(left_sidebar)
 
@@ -193,6 +260,30 @@ class SeismicPickerQT(QMainWindow):
         right_sidebar.addWidget(self.ph_sel)
         right_sidebar.addWidget(self.ph_custom)
 
+        right_sidebar.addWidget(QLabel("<b>Polarity:</b>"))
+        self.polarity_sel = QComboBox()
+        self.polarity_sel.addItems(["undecidable", "positive", "negative"])
+        right_sidebar.addWidget(self.polarity_sel)
+
+        right_sidebar.addWidget(QLabel("<b>Onset:</b>"))
+        self.onset_sel = QComboBox()
+        self.onset_sel.addItems(["Unknown", "Emergent", "Impulsive"])
+        right_sidebar.addWidget(self.onset_sel)
+
+        right_sidebar.addWidget(QLabel("<b>Picking Mode:</b>"))
+        self.picking_mode_sel = QComboBox()
+        self.picking_mode_sel.addItems(["Sidebar", "Popup"])
+        default_mode = self.config.get("defaults", {}).get("picking_mode", "Popup")
+        self.picking_mode_sel.setCurrentText(default_mode)
+        right_sidebar.addWidget(self.picking_mode_sel)
+
+        right_sidebar.addWidget(QLabel("<b>Theoretical:</b>"))
+        self.show_theo = QCheckBox("Show Arrivals")
+        default_theo = self.config.get("defaults", {}).get("show_theoretical_arrivals", False)
+        self.show_theo.setChecked(default_theo)
+        self.show_theo.setStyleSheet("font-weight: bold; color: #d35400;") # highlight
+        right_sidebar.addWidget(self.show_theo)
+
         right_sidebar.addStretch()
         right_group.setLayout(right_sidebar)
 
@@ -204,9 +295,9 @@ class SeismicPickerQT(QMainWindow):
         self.scroll.setWidget(self.win)
         graph_area.addWidget(self.scroll, stretch=4)
 
-        self.table = QTableWidget(0, 6)
+        self.table = QTableWidget(0, 9)
         self.table.setHorizontalHeaderLabels(
-            ["Sta", "Cha", "Phase", "Time", "Unc (s)", "Action"]
+            ["Sta", "Cha", "Phase", "Date", "Time", "Unc (s)", "Polarity", "Onset", "Action"]
         )
         self.table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch
@@ -222,9 +313,9 @@ class SeismicPickerQT(QMainWindow):
 
     def _connect_signals(self):
         """Register events and UI updates."""
-        self.view_mode.currentIndexChanged.connect(self.update_plots)
-        self.sta_sel.currentIndexChanged.connect(self.update_plots)
-        self.view_wave.toggled.connect(self.update_plots)
+        self.view_mode.currentIndexChanged.connect(lambda: self.update_plots(reset_zoom=True))
+        self.sta_sel.currentIndexChanged.connect(lambda: self.update_plots(reset_zoom=True))
+        self.view_wave.toggled.connect(lambda: self.update_plots(reset_zoom=True))
         self.spec_scale.currentIndexChanged.connect(self.update_plots)
         self.color_mode.currentIndexChanged.connect(self.update_plots)
         self.rmmean.stateChanged.connect(self.update_plots)
@@ -233,6 +324,7 @@ class SeismicPickerQT(QMainWindow):
         self.f_low.valueChanged.connect(self.update_plots)
         self.f_high.valueChanged.connect(self.update_plots)
         self.v_zoom.valueChanged.connect(self.update_gain)
+        self.show_theo.stateChanged.connect(self.update_plots)
 
         self.win.scene().sigMouseMoved.connect(self.on_mouse_move)
         self.win.scene().sigMouseClicked.connect(self.on_mouse_click_release)
@@ -249,8 +341,10 @@ class SeismicPickerQT(QMainWindow):
             "phase_rotate": self.rotate_phase,
             "reset_view": self.reset_view,
             "save_sac": self.save_to_sac,
-            "export_csv": self.export_csv,
+            "export_csv": self.export_picks,
             "toggle_filter": self.toggle_filter,
+            "pick_p": lambda: self.start_pick_from_shortcut("P"),
+            "pick_s": lambda: self.start_pick_from_shortcut("S"),
         }
 
         for action, key in sc_config.items():
@@ -287,10 +381,12 @@ class SeismicPickerQT(QMainWindow):
                     for tr in st_file:
                         tr.stats.filename = f
                         new_st += tr
-                except Exception:
+                except Exception as e:
+                    print(f"Error while loading waveforms: {e}")
                     continue
             if new_st:
                 self.original_stream = new_st
+                self.base_stream = new_st.copy()
                 self.picks = utils.extract_existing_picks(self.original_stream)
                 self._setup_after_load()
 
@@ -306,14 +402,15 @@ class SeismicPickerQT(QMainWindow):
         )
         if reply == QMessageBox.StandardButton.Yes:
             self.original_stream = Stream()
+            self.base_stream = Stream()
             self.picks = []
             self.stations = []
             self.sta_sel.clear()
             self.table.setRowCount(0)
             self.win.clear()
-            self.update_plots()
+            self.update_plots(reset_zoom=True)
 
-    def _setup_after_load(self):
+    def _setup_after_load(self, target_idx=0):
         """Populate the station list after data loading."""
         seen = set()
         self.sta_sel.blockSignals(True)
@@ -325,8 +422,13 @@ class SeismicPickerQT(QMainWindow):
                 self.stations.append({"id": s_id, "sta": tr.stats.station})
                 self.sta_sel.addItem(s_id)
                 seen.add(s_id)
+        
+        if self.sta_sel.count() > 0:
+            target_idx = min(max(0, target_idx), self.sta_sel.count() - 1)
+            self.sta_sel.setCurrentIndex(target_idx)
+            
         self.sta_sel.blockSignals(False)
-        self.update_plots()
+        self.update_plots(reset_zoom=True)
         self.update_table()
 
     def prev_station(self):
@@ -357,7 +459,7 @@ class SeismicPickerQT(QMainWindow):
                 [tr for tr in self.original_stream if tr.stats.station != sta]
             )
             self.picks = [p for p in self.picks if p["sta"] != sta]
-            self._setup_after_load()
+            self._setup_after_load(target_idx=idx)
 
     def rotate_phase(self):
         """Cycle between P-S phases"""
@@ -368,8 +470,12 @@ class SeismicPickerQT(QMainWindow):
         else:
             self.ph_sel.setCurrentText("P")
 
-    def update_plots(self):
+    def update_plots(self, *args, reset_zoom=False):
         """Redraw all plots based on current filters and view mode."""
+        old_view_range = None
+        if not reset_zoom and self.plots and self.view_wave.isChecked() and hasattr(self.plots[0], 'viewRange'):
+            old_view_range = self.plots[0].viewRange()
+
         self.win.clear()
         self.plots = []
         if not self.original_stream or not self.stations:
@@ -385,6 +491,11 @@ class SeismicPickerQT(QMainWindow):
         }
 
         proc_st = utils.apply_preprocessing(self.original_stream, params)
+        
+        model_name = self.config.get("defaults", {}).get("velocity_model", "")
+        theo_arrs = {}
+        if model_name and self.show_theo.isChecked():
+            theo_arrs = utils.calculate_theoretical_arrivals(proc_st, model_name=model_name)
         mode = self.view_mode.currentText()
 
         if mode == "Single Station":
@@ -440,7 +551,10 @@ class SeismicPickerQT(QMainWindow):
                         yMin=-data_max * 10,
                         yMax=data_max * 10,
                     )
-                    p.setXRange(0, dur, padding=0)
+                    if old_view_range is not None:
+                        p.setXRange(old_view_range[0][0], old_view_range[0][1], padding=0)
+                    else:
+                        p.setXRange(0, dur, padding=0)
                     p.plot(tr.times(), tr.data, pen=pg.mkPen(color, width=1.2))
                     p.meta = {
                         "sta": tr.stats.station,
@@ -455,6 +569,22 @@ class SeismicPickerQT(QMainWindow):
                             if 0 <= t_rel <= dur:
                                 self._add_visual_pick(
                                     p, t_rel, pk["phase"], pk.get("uncertainty", 0.0)
+                                )
+                                
+                    # Draw theoretical arrivals
+                    if tr.stats.station in theo_arrs:
+                        for ph, arr_time in theo_arrs[tr.stats.station].items():
+                            t_rel = arr_time - tr.stats.starttime
+                            if 0 <= t_rel <= dur:
+                                ph_u = ph.upper()
+                                if ph_u == "P":
+                                    t_col = "#e74c3c" # Red
+                                elif ph_u == "S":
+                                    t_col = "#2980b9" # Blue
+                                else:
+                                    t_col = "#1abc9c" # Teal
+                                self._add_visual_pick(
+                                    p, t_rel, f"{ph} (theo)", 0.0, color=t_col, style=Qt.PenStyle.DotLine
                                 )
                 else:
                     # Spectrum view
@@ -485,6 +615,40 @@ class SeismicPickerQT(QMainWindow):
                 self.plots.append(p)
         self.update_gain()
 
+    def _start_picking(self, scene_pos):
+        for p in self.plots:
+            if p.sceneBoundingRect().contains(scene_pos):
+                mouse_point = p.vb.mapSceneToView(scene_pos)
+                self.pick_start_point = scene_pos
+
+                phase = self.ph_sel.currentText()
+                if phase == "Custom":
+                    phase = self.ph_custom.text()
+
+                self.current_picking_data = {
+                    "sta": p.meta["sta"],
+                    "cha_source": p.meta["cha"],
+                    "phase": phase,
+                    "abs_t": str(p.meta["st"] + mouse_point.x()),
+                    "t_rel": mouse_point.x(),
+                    "polarity": self.polarity_sel.currentText(),
+                    "onset": self.onset_sel.currentText(),
+                }
+
+                self.active_pick_item = pg.LinearRegionItem(
+                    values=[mouse_point.x(), mouse_point.x()],
+                    brush=pg.mkBrush(142, 68, 173, 100),
+                    movable=False,
+                )
+                p.addItem(self.active_pick_item)
+                break
+
+    def start_pick_from_shortcut(self, phase):
+        if not self.last_mouse_pos or not self.view_wave.isChecked() or self.active_pick_item:
+            return
+        self.ph_sel.setCurrentText(phase)
+        self._start_picking(self.last_mouse_pos)
+
     def on_mouse_click_release(self, event):
         """Start or finalize a pick on mouse click."""
         if self.active_pick_item:
@@ -494,7 +658,21 @@ class SeismicPickerQT(QMainWindow):
                 - self.active_pick_item.getRegion()[0]
             ) / 2
             self.current_picking_data["uncertainty"] = round(unc, 4)
-            self.picks.append(self.current_picking_data)
+            
+            if self.picking_mode_sel.currentText() == "Popup":
+                dialog = PickDetailsDialog(
+                    self, 
+                    default_phase=self.current_picking_data["phase"],
+                    custom_phase=self.ph_custom.text()
+                )
+                if dialog.exec():
+                    data = dialog.get_data()
+                    self.current_picking_data["phase"] = data["phase"]
+                    self.current_picking_data["polarity"] = data["polarity"]
+                    self.current_picking_data["onset"] = data["onset"]
+                    self.picks.append(self.current_picking_data)
+            else:
+                self.picks.append(self.current_picking_data)
 
             for p in self.plots:
                 p.removeItem(self.active_pick_item)
@@ -504,33 +682,11 @@ class SeismicPickerQT(QMainWindow):
             return
 
         if event.button() == Qt.MouseButton.LeftButton and self.view_wave.isChecked():
-            for p in self.plots:
-                if p.sceneBoundingRect().contains(event.scenePos()):
-                    mouse_point = p.vb.mapSceneToView(event.scenePos())
-                    self.pick_start_point = event.scenePos()
-
-                    phase = self.ph_sel.currentText()
-                    if phase == "Custom":
-                        phase = self.ph_custom.text()
-
-                    self.current_picking_data = {
-                        "sta": p.meta["sta"],
-                        "cha_source": p.meta["cha"],
-                        "phase": phase,
-                        "abs_t": str(p.meta["st"] + mouse_point.x()),
-                        "t_rel": mouse_point.x(),
-                    }
-
-                    self.active_pick_item = pg.LinearRegionItem(
-                        values=[mouse_point.x(), mouse_point.x()],
-                        brush=pg.mkBrush(142, 68, 173, 100),
-                        movable=False,
-                    )
-                    p.addItem(self.active_pick_item)
-                    break
+            self._start_picking(event.scenePos())
 
     def on_mouse_move(self, pos):
         """Update uncertainty visual range based on vertical mouse movement."""
+        self.last_mouse_pos = pos
         if self.active_pick_item and self.pick_start_point:
             diff_y = abs(pos.y() - self.pick_start_point.y())
             view_range = self.plots[0].viewRange()[0]
@@ -540,9 +696,19 @@ class SeismicPickerQT(QMainWindow):
                 [t_center - uncertainty, t_center + uncertainty]
             )
 
-    def _add_visual_pick(self, plot, x_pos, label, uncertainty=0.0):
+    def _add_visual_pick(self, plot, x_pos, label, uncertainty=0.0, color=None, style=Qt.PenStyle.DashLine):
         c_cfg = self.config.get("colors", {})
-        main_color = c_cfg.get("pick_line", "#8e44ad")
+        
+        if color:
+            main_color = color
+        else:
+            lbl_up = label.upper()
+            if "P" in lbl_up:
+                main_color = "#c0392b" # Darker Red
+            elif "S" in lbl_up:
+                main_color = "#2980b9" # Darker Blue
+            else:
+                main_color = c_cfg.get("pick_line", "#8e44ad")
 
         if uncertainty > 0:
             brush_color = pg.mkColor(main_color)
@@ -558,9 +724,13 @@ class SeismicPickerQT(QMainWindow):
         line = pg.InfiniteLine(
             pos=x_pos,
             angle=90,
-            pen=pg.mkPen(main_color, width=1.5, style=Qt.PenStyle.DashLine),
+            pen=pg.mkPen(main_color, width=1.5, style=style),
         )
         plot.addItem(line)
+        
+        text = pg.TextItem(label, color=main_color, anchor=(0, 1))
+        plot.addItem(text)
+        text.setPos(x_pos, 0)
 
     def update_table(self):
         self.table.setRowCount(len(self.picks))
@@ -568,12 +738,15 @@ class SeismicPickerQT(QMainWindow):
             self.table.setItem(i, 0, QTableWidgetItem(pk["sta"]))
             self.table.setItem(i, 1, QTableWidgetItem(pk["cha_source"]))
             self.table.setItem(i, 2, QTableWidgetItem(pk["phase"]))
-            self.table.setItem(i, 3, QTableWidgetItem(pk["abs_t"][-15:]))
-            self.table.setItem(i, 4, QTableWidgetItem(str(pk.get("uncertainty", 0.0))))
+            self.table.setItem(i, 3, QTableWidgetItem(pk["abs_t"].split('T')[0]))
+            self.table.setItem(i, 4, QTableWidgetItem(pk["abs_t"].split("T")[-1][:-1]))
+            self.table.setItem(i, 5, QTableWidgetItem(str(pk.get("uncertainty", 0.0))))
+            self.table.setItem(i, 6, QTableWidgetItem(pk.get("polarity", "Unknown")))
+            self.table.setItem(i, 7, QTableWidgetItem(pk.get("onset", "Unknown")))
             btn = QPushButton("Remove")
             btn.setStyleSheet("background-color: #a2292b; color: white;")
             btn.clicked.connect(lambda _, idx=i: self.delete_pick(idx))
-            self.table.setCellWidget(i, 5, btn)
+            self.table.setCellWidget(i, 8, btn)
 
     def delete_pick(self, idx):
         if 0 <= idx < len(self.picks):
@@ -583,7 +756,7 @@ class SeismicPickerQT(QMainWindow):
 
     def reset_view(self):
         self.v_zoom.setValue(1)
-        self.update_plots()
+        self.update_plots(reset_zoom=True)
 
     def update_gain(self):
         gain = self.v_zoom.value()
@@ -595,13 +768,41 @@ class SeismicPickerQT(QMainWindow):
                     amp = np.max(np.abs(y)) or 1
                     p.setYRange(-amp / gain, amp / gain)
 
-    def export_csv(self):
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Export CSV", "picks.csv", "CSV Files (*.csv)"
+    def import_picks(self):
+        path, filt = QFileDialog.getOpenFileName(
+            self, "Import Picks", "", "QuakeML (*.qml *.xml);;CSV Files (*.csv)"
         )
         if path:
-            utils.export_to_csv(self.picks, path)
-            QMessageBox.information(self, "Done", "CSV Exported.")
+            try:
+                if path.endswith('.csv'):
+                    new_picks = utils.extract_picks_from_csv(path)
+                else:
+                    new_picks = utils.extract_picks_from_quakeml(path)
+                self.picks.extend(new_picks)
+                self.update_table()
+                self.update_plots()
+                QMessageBox.information(self, "Done", "Picks imported.")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Could not import picks: {e}")
+
+    def export_picks(self):
+        if not self.picks:
+            return
+        path, filt = QFileDialog.getSaveFileName(
+            self, "Export Picks", "picks", "QuakeML (*.qml);;QuakeML (*.xml);;CSV Files (*.csv)"
+        )
+        if path:
+            try:
+                if path.endswith('.csv') or "CSV" in filt:
+                    if not path.endswith('.csv'): path += ".csv"
+                    utils.export_to_csv(self.picks, path)
+                else:
+                    if not path.endswith('.qml') and not path.endswith('.xml'): 
+                        path += ".qml" if "qml" in filt else ".xml"
+                    utils.export_to_quakeml(self.picks, path)
+                QMessageBox.information(self, "Done", "Picks Exported.")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Could not export picks: {e}")
 
     def save_to_sac(self):
         if not self.picks:
@@ -616,6 +817,17 @@ class SeismicPickerQT(QMainWindow):
             utils.save_picks_to_sac(self.original_stream, self.picks)
             QMessageBox.information(self, "Saved", "SAC files updated.")
 
+    def sort_stations(self):
+        mode = self.sort_sel.currentText()
+        if mode == "Original":
+            if hasattr(self, "base_stream") and self.base_stream:
+                self.original_stream = self.base_stream.copy()
+        elif mode == "By Distance":
+            self.original_stream = utils.reorder_stream_by_distance(self.original_stream)
+        elif mode == "By P/S Arrival":
+            self.original_stream = utils.reorder_stream_by_arrival(self.original_stream, self.picks)
+        
+        self._setup_after_load()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

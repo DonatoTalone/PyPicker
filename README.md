@@ -1,5 +1,7 @@
 # PyPicker - Seismic Waveform Picker
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21932794.svg)](https://doi.org/10.5281/zenodo.21932794)
+
 A simple Python-based GUI for seismic waveform visualization, frequency analysis, and manual arrival picking. It utilizes **PyQt6** for the interface, **PyQtGraph** for high-performance plotting, and **ObsPy** for seismic data handling.
 It is partially written by Gemini 3.6 Flash (High) Antigravity.
 
@@ -24,12 +26,20 @@ It is partially written by Gemini 3.6 Flash (High) Antigravity.
 - `config.json`: Configuration file for shortcuts and visual themes.
 - `requirements.txt`: List of Python dependencies.
 
-## License
-The code is released under [GNU General Public License](./LICENSE)
+## Installation & Usage
 
-## Installation
+### Option 1: Standalone Executable (Recommended for non-developers)
+Download the latest pre-compiled standalone version from the **[GitHub Releases](https://github.com/DonatoTalone/PyPicker/releases)** page:
+- **Linux:** Download `PyPicker-Linux-x86_64.zip`, extract, and execute `./PyPicker`.
+- **Windows:** Download `PyPicker-Windows-x64.zip`, extract, and double-click `PyPicker.exe`.
 
-### 1. Create a Virtual Environment
+*Note: Ensure `config.json` remains in the same directory as the executable.*
+
+---
+
+### Option 2: Running from Source
+
+#### 1. Create a Virtual Environment
 It is recommended to use a virtual environment to avoid dependency conflicts.
 
 ```bash
@@ -43,63 +53,52 @@ pypicker\Scripts\activate
 source pypicker/bin/activate
 ```
 
-### 2. Install Dependencies
+#### 2. Install Dependencies
 
-Use the provided requirements.txt file:
+Use the provided `requirements.txt` file:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Note: The requirements include PyQt6, Obspy, pyqtgraph, and numpy.
-
-## How to Use
-
-1. Run the application:
+#### 3. Run the Application
 
 ```bash
 python seismic_picker_qt.py
 ```
 
-2. Open Data: Click "Open Waveforms" and select your seismic files.
+---
 
-3. Pick Arrivals:
+## How to Use
 
-  - Ensure "Waveform" mode is active.
+1. **Open Data:** Click "Open Waveforms" and select your seismic files.
 
-  - **Option 1 (Mouse):** Click on the trace to set a pick.
+2. **Pick Arrivals:**
+   - Ensure "Waveform" mode is active.
+   - **Option 1 (Mouse):** Click on the trace to set a pick.
+   - **Option 2 (Keyboard):** Hover your mouse over the trace and press `1` (for P phase) or `2` (for S phase).
+   - While holding/moving the mouse vertically, the purple shaded area (uncertainty) will expand/contract.
+   - Release or click again to finalize. If "Popup" picking mode is active, a dialog will ask you to confirm Phase, Polarity, and Onset.
 
-  - **Option 2 (Keyboard):** Hover your mouse over the trace and press `1` (for P phase) or `2` (for S phase).
+3. **Navigation & View:** 
+   - Use the sidebar or keyboard shortcuts (default: A for previous, D for next) to cycle through stations.
 
-  - While holding/moving the mouse vertically, the purple shaded area (uncertainty) will expand/contract.
-
-  - Release or click again to finalize. If "Popup" picking mode is active, a dialog will ask you to confirm Phase, Polarity, and Onset.
-
-4. Navigation & View: 
-  - Use the sidebar or keyboard shortcuts (default: A for previous, D for next) to cycle through stations.
-
-5. Save: Use "Save as SAC" to modify the original file headers or "Export Picks" to save the picks to various formats file. Use "Import Picks" to load picks from existing files (e.g. CSV, QuakeML).
+4. **Save & Export:** Use "Save as SAC" to modify the original file headers or "Export Picks" to save the picks to CSV or QuakeML. Use "Import Picks" to load picks from existing files.
 
 ## Default Shortcuts
 
-Can be modified in config.json:
+Can be modified in `config.json`:
 
-  - 1 / 2: Quick pick P phase / S phase at current mouse position
+- `1` / `2`: Quick pick P phase / S phase at current mouse position
+- `A` / `D`: Previous / Next Station
+- `P`: Select P phase
+- `S`: Select S phase
+- `R`: Reset Zoom
+- `F`: Toggle BandPass filter
+- `C`: Select Custom phase
+- `Q`: Rotate/Cycle between P and S phases
+- `Ctrl+S`: Save picks to SAC headers
+- `Ctrl+E`: Export picks to CSV/QuakeML
 
-  - A / D: Previous / Next Station
-
-  - P: Select P phase
-
-  - S: Select S phase
-
-  - R: Reset Zoom
-
-  - F: Toggle BandPass filter
-
-  - C: Select Custom phase
-
-  - Q: Rotate/Cycle between P and S phases
-
-  - Ctrl+S: Save picks to SAC headers
-
-  - Ctrl+E: Export picks to CSV/QuakeML
+## License
+The code is released under [GNU General Public License](./LICENSE).

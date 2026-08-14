@@ -1,6 +1,7 @@
 # PyPicker - Seismic Waveform Picker
 
 A simple Python-based GUI for seismic waveform visualization, frequency analysis, and manual arrival picking. It utilizes **PyQt6** for the interface, **PyQtGraph** for high-performance plotting, and **ObsPy** for seismic data handling.
+It is partially written by Gemini 3.6 Flash (High) Antigravity.
 
 ## Features
 - **Waveform Visualization:** Load SAC, MSEED, and other formats supported by ObsPy.

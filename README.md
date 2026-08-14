@@ -28,12 +28,25 @@ It is partially written by Gemini 3.6 Flash (High) Antigravity.
 
 ## Installation & Usage
 
-### Option 1: Standalone Executable (Recommended for non-developers)
-Download the latest pre-compiled standalone version from the **[GitHub Releases](https://github.com/DonatoTalone/PyPicker/releases)** page:
-- **Linux:** Download `PyPicker-Linux-x86_64.zip`, extract, and execute `./PyPicker`.
-- **Windows:** Download `PyPicker-Windows-x64.zip`, extract, and double-click `PyPicker.exe`.
+### Option 1: Pre-compiled Packages & Binaries (Recommended)
+Download the latest version for your distribution from **[GitHub Releases](https://github.com/DonatoTalone/PyPicker/releases)**:
 
-*Note: Ensure `config.json` remains in the same directory as the executable.*
+- **Debian / Ubuntu / Mint (`.deb`):**
+  ```bash
+  sudo dpkg -i pypicker-1.0.0-debian-ubuntu.deb
+  ```
+- **Fedora / RHEL / CentOS (`.rpm`):**
+  ```bash
+  sudo dnf install ./pypicker-1.0.0-fedora-rhel.rpm
+  ```
+- **Arch Linux / Manjaro (`.pkg.tar.zst`):**
+  ```bash
+  sudo pacman -U ./pypicker-1.0.0-archlinux.pkg.tar.zst
+  ```
+- **Generic Linux (Standalone Zip):**
+  Download `PyPicker-Linux-x86_64.zip`, extract, and execute `./PyPicker`.
+- **Windows (Standalone Zip):**
+  Download `PyPicker-Windows-x64.zip`, extract, and run `PyPicker.exe`.
 
 ---
 

@@ -16,11 +16,7 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            artifact_name: PyPicker-Linux
-            asset_name: PyPicker-Linux-x86_64.zip
           - os: windows-latest
-            artifact_name: PyPicker-Windows
-            asset_name: PyPicker-Windows-x64.zip
 
     steps:
       - name: Checkout Repository
@@ -41,21 +37,63 @@ jobs:
         run: |
           pyinstaller PyPicker.spec
 
-      - name: Compress Binaries (Linux)
+      - name: Build Linux Packages (Zip, DEB, RPM, Arch)
         if: runner.os == 'Linux'
         run: |
-          cd dist
-          zip -r ../${{ matrix.asset_name }} PyPicker config.json
+          # Extract version from tag (e.g. v1.0.0 -> 1.0.0)
+          VERSION=${GITHUB_REF_NAME#v}
+          
+          # Install FPM (Effing Package Manager) and RPM tools
+          sudo apt-get update
+          sudo apt-get install -y ruby ruby-dev build-essential rpm
+          sudo gem install --no-document fpm
 
-      - name: Compress Binaries (Windows)
+          # 1. Generic ZIP
+          cd dist
+          zip -r ../PyPicker-Linux-x86_64.zip PyPicker config.json
+          cd ..
+
+          # 2. Debian / Ubuntu (.deb)
+          fpm -s dir -t deb \
+            -n pypicker \
+            -v "$VERSION" \
+            --prefix /opt/pypicker \
+            --description "PyPicker - Seismic Waveform Picker" \
+            -C dist/PyPicker .
+          mv pypicker_${VERSION}_amd64.deb pypicker-${VERSION}-debian-ubuntu.deb || true
+
+          # 3. Fedora / RHEL (.rpm)
+          fpm -s dir -t rpm \
+            -n pypicker \
+            -v "$VERSION" \
+            --prefix /opt/pypicker \
+            --description "PyPicker - Seismic Waveform Picker" \
+            -C dist/PyPicker .
+          mv pypicker-${VERSION}-1.x86_64.rpm pypicker-${VERSION}-fedora-rhel.rpm || true
+
+          # 4. Arch Linux / Manjaro (.pkg.tar.zst)
+          fpm -s dir -t pacman \
+            -n pypicker \
+            -v "$VERSION" \
+            --prefix /opt/pypicker \
+            --description "PyPicker - Seismic Waveform Picker" \
+            -C dist/PyPicker .
+          mv pypicker-${VERSION}-1-x86_64.pkg.tar.zst pypicker-${VERSION}-archlinux.pkg.tar.zst || true
+
+      - name: Build Windows Package
         if: runner.os == 'Windows'
         run: |
           cd dist
-          Compress-Archive -Path PyPicker.exe, ..\config.json -DestinationPath ..\${{ matrix.asset_name }}
+          Compress-Archive -Path PyPicker.exe, ..\config.json -DestinationPath ..\PyPicker-Windows-x64.zip
 
-      - name: Upload Release Asset
+      - name: Upload Release Assets
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.asset_name }}
+          files: |
+            PyPicker-Linux-x86_64.zip
+            pypicker-*-debian-ubuntu.deb
+            pypicker-*-fedora-rhel.rpm
+            pypicker-*-archlinux.pkg.tar.zst
+            PyPicker-Windows-x64.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

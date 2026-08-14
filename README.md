@@ -1,6 +1,6 @@
 # PyPicker - Seismic Waveform Picker
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21932794.svg)](https://doi.org/10.5281/zenodo.21932794)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21933402.svg)](https://doi.org/10.5281/zenodo.21933402)
 
 A simple Python-based GUI for seismic waveform visualization, frequency analysis, and manual arrival picking. It utilizes **PyQt6** for the interface, **PyQtGraph** for high-performance plotting, and **ObsPy** for seismic data handling.
 It is partially written by Gemini 3.6 Flash (High) Antigravity.

@@ -48,43 +48,45 @@ jobs:
           sudo apt-get install -y ruby ruby-dev build-essential rpm
           sudo gem install --no-document fpm
 
+          # Prepare system package layout (/usr/bin/pypicker)
+          mkdir -p pkg_dir/usr/bin
+          cp dist/PyPicker pkg_dir/usr/bin/pypicker
+          chmod +x pkg_dir/usr/bin/pypicker
+
           # 1. Generic ZIP
           cd dist
-          zip -r ../PyPicker-Linux-x86_64.zip PyPicker config.json
+          zip -r ../PyPicker-Linux-x86_64.zip PyPicker
           cd ..
 
           # 2. Debian / Ubuntu (.deb)
           fpm -s dir -t deb \
             -n pypicker \
             -v "$VERSION" \
-            --prefix /opt/pypicker \
             --description "PyPicker - Seismic Waveform Picker" \
-            -C dist/PyPicker .
+            -C pkg_dir .
           mv pypicker_${VERSION}_amd64.deb pypicker-${VERSION}-debian-ubuntu.deb || true
 
           # 3. Fedora / RHEL (.rpm)
           fpm -s dir -t rpm \
             -n pypicker \
             -v "$VERSION" \
-            --prefix /opt/pypicker \
             --description "PyPicker - Seismic Waveform Picker" \
-            -C dist/PyPicker .
+            -C pkg_dir .
           mv pypicker-${VERSION}-1.x86_64.rpm pypicker-${VERSION}-fedora-rhel.rpm || true
 
           # 4. Arch Linux / Manjaro (.pkg.tar.zst)
           fpm -s dir -t pacman \
             -n pypicker \
             -v "$VERSION" \
-            --prefix /opt/pypicker \
             --description "PyPicker - Seismic Waveform Picker" \
-            -C dist/PyPicker .
+            -C pkg_dir .
           mv pypicker-${VERSION}-1-x86_64.pkg.tar.zst pypicker-${VERSION}-archlinux.pkg.tar.zst || true
 
       - name: Build Windows Package
         if: runner.os == 'Windows'
         run: |
           cd dist
-          Compress-Archive -Path PyPicker.exe, ..\config.json -DestinationPath ..\PyPicker-Windows-x64.zip
+          Compress-Archive -Path PyPicker.exe -DestinationPath ..\PyPicker-Windows-x64.zip
 
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v2

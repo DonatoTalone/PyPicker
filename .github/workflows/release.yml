@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*'  # Si attiva quando fai il push di un tag tipo v1.0.0
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build PyPicker for ${{ matrix.os }}

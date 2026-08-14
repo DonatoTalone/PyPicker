@@ -4,6 +4,8 @@ import os
 # Prevent ObsPy from attempting to run git describe on host repo in frozen PyInstaller builds
 if getattr(sys, "frozen", False):
     import subprocess
+    import warnings
+    warnings.filterwarnings("ignore", message=".*ObsPy could not determine its version number.*")
     _orig_check_output = getattr(subprocess, "check_output", None)
     if _orig_check_output:
         def _safe_check_output(cmd, *args, **kwargs):

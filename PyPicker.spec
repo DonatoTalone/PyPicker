@@ -8,18 +8,31 @@ from PyInstaller.utils.hooks import collect_all, copy_metadata
 datas, binaries, hiddenimports = collect_all('obspy')
 
 # Collect distribution metadata for dependencies so pkg_resources/importlib.metadata can find them
-for pkg in ['obspy', 'requests', 'urllib3', 'certifi', 'charset_normalizer', 'idna', 'lxml', 'numpy', 'scipy', 'matplotlib', 'setuptools']:
+pkgs_metadata = [
+    'obspy', 'decorator', 'greenlet', 'requests', 'urllib3', 'certifi',
+    'charset_normalizer', 'colorama', 'idna', 'lxml', 'numpy', 'scipy',
+    'matplotlib', 'setuptools', 'packaging', 'pyqtgraph', 'pytz',
+    'contourpy', 'cycler', 'fonttools', 'kiwisolver', 'pillow',
+    'pyparsing', 'sqlalchemy', 'six', 'python-dateutil', 'PyQt6'
+]
+for pkg in pkgs_metadata:
     try:
         datas += copy_metadata(pkg)
     except Exception:
         pass
 
-hiddenimports += ['requests', 'urllib3', 'lxml', 'lxml.etree']
+hiddenimports += ['decorator', 'greenlet', 'requests', 'urllib3', 'lxml', 'lxml.etree']
 
 obspy_dir = os.path.dirname(obspy.__file__)
 rel_ver = os.path.join(obspy_dir, 'RELEASE-VERSION')
 if os.path.exists(rel_ver):
     datas.append((rel_ver, 'obspy'))
+else:
+    import tempfile
+    tmp_rel_ver = os.path.join(tempfile.gettempdir(), 'RELEASE-VERSION')
+    with open(tmp_rel_ver, 'w') as f:
+        f.write(getattr(obspy, '__version__', '1.4.2') + '\n')
+    datas.append((tmp_rel_ver, 'obspy'))
 
 datas.append(('config.json', '.'))
 

@@ -102,7 +102,8 @@ class SeismicPickerQT(QMainWindow):
 
         self.init_ui()
         self.setup_shortcuts()
-        self.apply_system_theme()
+        self.update_shortcuts_reminder()
+        self.apply_theme(self.theme_sel.currentText())
 
         if self.original_stream:
             self._setup_after_load()
@@ -179,6 +180,11 @@ class SeismicPickerQT(QMainWindow):
         self.color_mode = QComboBox()
         self.color_mode.addItems(["Channel-based", "Uniform"])
         left_sidebar.addWidget(self.color_mode)
+
+        left_sidebar.addWidget(QLabel("<b>Theme:</b>"))
+        self.theme_sel = QComboBox()
+        self.theme_sel.addItems(["System", "Dark", "Light"])
+        left_sidebar.addWidget(self.theme_sel)
 
         left_sidebar.addWidget(QLabel("<b>Gain:</b>"))
         self.v_zoom = QSlider(Qt.Orientation.Horizontal)
@@ -285,6 +291,18 @@ class SeismicPickerQT(QMainWindow):
         right_sidebar.addWidget(self.show_theo)
 
         right_sidebar.addStretch()
+
+        # Shortcuts reminder card
+        sc_group = QGroupBox("Shortcuts")
+        sc_layout = QVBoxLayout()
+        self.shortcuts_label = QLabel()
+        self.shortcuts_label.setWordWrap(True)
+        self.shortcuts_label.setTextFormat(Qt.TextFormat.RichText)
+        self.shortcuts_label.setStyleSheet("font-size: 11px;")
+        sc_layout.addWidget(self.shortcuts_label)
+        sc_group.setLayout(sc_layout)
+
+        right_sidebar.addWidget(sc_group)
         right_group.setLayout(right_sidebar)
 
         # --- MAIN AREA: Graphics & Table ---
@@ -325,6 +343,7 @@ class SeismicPickerQT(QMainWindow):
         self.f_high.valueChanged.connect(self.update_plots)
         self.v_zoom.valueChanged.connect(self.update_gain)
         self.show_theo.stateChanged.connect(self.update_plots)
+        self.theme_sel.currentTextChanged.connect(self.apply_theme)
 
         self.win.scene().sigMouseMoved.connect(self.on_mouse_move)
         self.win.scene().sigMouseClicked.connect(self.on_mouse_click_release)
@@ -356,14 +375,109 @@ class SeismicPickerQT(QMainWindow):
         idx = self.filt_sel.currentIndex()
         self.filt_sel.setCurrentIndex(3 if idx == 0 else 0)
 
-    def apply_system_theme(self):
-        """Adjust pyqtgraph theme to match system palette."""
-        palette = self.palette()
-        bg = palette.color(QPalette.ColorRole.Window)
-        fg = palette.color(QPalette.ColorRole.WindowText)
-        pg.setConfigOption("background", bg)
-        pg.setConfigOption("foreground", fg)
-        self.fg_color = fg.name()
+    def _is_light_bg(self, color_val):
+        qcol = pg.mkColor(color_val)
+        lum = 0.299 * qcol.red() + 0.587 * qcol.green() + 0.114 * qcol.blue()
+        return lum > 128
+
+    def apply_theme(self, mode="System"):
+        """Adjust pyqtgraph theme and application palette colors without modifying layout metrics or borders."""
+        app = QApplication.instance()
+        
+        if mode == "Dark":
+            bg_color = "#1e1e1e"
+            fg_color = "#ffffff"
+            input_bg = "#2b2b2b"
+            
+            palette = QPalette()
+            palette.setColor(QPalette.ColorRole.Window, pg.mkColor(bg_color))
+            palette.setColor(QPalette.ColorRole.WindowText, pg.mkColor(fg_color))
+            palette.setColor(QPalette.ColorRole.Base, pg.mkColor(input_bg))
+            palette.setColor(QPalette.ColorRole.AlternateBase, pg.mkColor("#333333"))
+            palette.setColor(QPalette.ColorRole.ToolTipBase, pg.mkColor(fg_color))
+            palette.setColor(QPalette.ColorRole.ToolTipText, pg.mkColor(fg_color))
+            palette.setColor(QPalette.ColorRole.Text, pg.mkColor(fg_color))
+            palette.setColor(QPalette.ColorRole.Button, pg.mkColor(input_bg))
+            palette.setColor(QPalette.ColorRole.ButtonText, pg.mkColor(fg_color))
+            palette.setColor(QPalette.ColorRole.BrightText, pg.mkColor("#ff0000"))
+            palette.setColor(QPalette.ColorRole.Highlight, pg.mkColor("#2746ae"))
+            palette.setColor(QPalette.ColorRole.HighlightedText, pg.mkColor("#ffffff"))
+            if app:
+                app.setPalette(palette)
+            self.setPalette(palette)
+            self.setStyleSheet("") # Clear custom stylesheet to preserve native widget dimensions/icons
+            
+        elif mode == "Light":
+            bg_color = "#ffffff"
+            fg_color = "#000000"
+            input_bg = "#f9f9f9"
+            
+            palette = QPalette()
+            palette.setColor(QPalette.ColorRole.Window, pg.mkColor("#f4f4f4"))
+            palette.setColor(QPalette.ColorRole.WindowText, pg.mkColor(fg_color))
+            palette.setColor(QPalette.ColorRole.Base, pg.mkColor(input_bg))
+            palette.setColor(QPalette.ColorRole.AlternateBase, pg.mkColor("#e9e9e9"))
+            palette.setColor(QPalette.ColorRole.ToolTipBase, pg.mkColor(fg_color))
+            palette.setColor(QPalette.ColorRole.ToolTipText, pg.mkColor(fg_color))
+            palette.setColor(QPalette.ColorRole.Text, pg.mkColor(fg_color))
+            palette.setColor(QPalette.ColorRole.Button, pg.mkColor("#e8e8e8"))
+            palette.setColor(QPalette.ColorRole.ButtonText, pg.mkColor(fg_color))
+            palette.setColor(QPalette.ColorRole.Highlight, pg.mkColor("#2746ae"))
+            palette.setColor(QPalette.ColorRole.HighlightedText, pg.mkColor("#ffffff"))
+            if app:
+                app.setPalette(palette)
+            self.setPalette(palette)
+            self.setStyleSheet("")
+
+        else: # System
+            if app:
+                app.setPalette(app.style().standardPalette())
+            self.setPalette(self.style().standardPalette())
+            self.setStyleSheet("")
+            palette = self.palette()
+            bg_color = palette.color(QPalette.ColorRole.Window).name()
+            fg_color = palette.color(QPalette.ColorRole.WindowText).name()
+
+        self.current_bg = bg_color
+        self.fg_color = fg_color
+
+        pg.setConfigOption("background", bg_color)
+        pg.setConfigOption("foreground", fg_color)
+
+        if hasattr(self, "win"):
+            self.win.setBackground(bg_color)
+
+        if hasattr(self, "plots") and self.plots:
+            self.update_plots()
+
+    def update_shortcuts_reminder(self):
+        """Update shortcuts reminder box dynamically based on config.json."""
+        sc_config = self.config.get("shortcuts", {})
+        descriptions = {
+            "prev_station": "Prev Station",
+            "next_station": "Next Station",
+            "pick_p": "Quick Pick P",
+            "pick_s": "Quick Pick S",
+            "phase_p": "Select P",
+            "phase_s": "Select S",
+            "phase_rotate": "Toggle P/S",
+            "toggle_filter": "Toggle Filter",
+            "reset_view": "Reset Zoom",
+            "save_sac": "Save SAC",
+            "export_csv": "Export Picks",
+        }
+        items = []
+        for key, desc in descriptions.items():
+            if key in sc_config:
+                val = sc_config[key]
+                items.append(f"<b>{val}</b>: {desc}")
+        
+        if items:
+            text = "<br>".join(items)
+        else:
+            text = "<i>No shortcuts configured</i>"
+            
+        self.shortcuts_label.setText(text)
 
     def open_files(self):
         """Load seismic data from disk."""
@@ -521,7 +635,7 @@ class SeismicPickerQT(QMainWindow):
                 reverse=True,
             )
             self.win.addItem(
-                pg.LabelItem(f"<b>STATION: {station}</b>", size="12pt"),
+                pg.LabelItem(f"<b>STATION: {station}</b>", size="12pt", color=self.fg_color),
                 row=current_row,
                 col=0,
             )
@@ -539,6 +653,8 @@ class SeismicPickerQT(QMainWindow):
                 chan = tr.stats.channel.upper()
                 if self.color_mode.currentIndex() == 0:
                     color = colors_cfg.get(chan[-1], colors_cfg.get("other", "gray"))
+                    if chan[-1] == "N" and self._is_light_bg(getattr(self, "current_bg", "#1e1e1e")):
+                        color = "#b7950b"
                 else:
                     color = self.fg_color
 
@@ -602,11 +718,12 @@ class SeismicPickerQT(QMainWindow):
                     )
 
                 # Draw channel name
+                fill_col = (255, 255, 255, 180) if self._is_light_bg(getattr(self, "current_bg", "#1e1e1e")) else (0, 0, 0, 180)
                 label = pg.TextItem(
                     f"{tr.stats.channel}",
                     color=color,
                     anchor=(1, 0),
-                    fill=(0, 0, 0, 100),
+                    fill=fill_col,
                 )
                 p.addItem(label)
                 label.setParentItem(p.vb)

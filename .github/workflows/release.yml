@@ -43,9 +43,9 @@ jobs:
           # Extract version from tag (e.g. v1.0.0 -> 1.0.0)
           VERSION=${GITHUB_REF_NAME#v}
           
-          # Install FPM (Effing Package Manager) and RPM tools
+          # Install FPM, RPM tools, and bsdtar/zstd for Arch pacman packages
           sudo apt-get update
-          sudo apt-get install -y ruby ruby-dev build-essential rpm
+          sudo apt-get install -y ruby ruby-dev build-essential rpm libarchive-tools zstd
           sudo gem install --no-document fpm
 
           # Prepare system package layout (/usr/bin/pypicker)

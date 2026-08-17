@@ -39,6 +39,35 @@ def load_config(filename="config.json"):
             print(f"Error loading config: {e}")
     return default_config
 
+def _scipy_filter_fallback(st, f_type, low, high):
+    """Fallback filtering directly using scipy when obspy plugins fail."""
+    from scipy.signal import butter, sosfiltfilt
+    for tr in st:
+        data = tr.data.astype(np.float64)
+        df = tr.stats.sampling_rate
+        nyq = 0.5 * df
+        
+        # Apply 5% cosine taper
+        npts = len(data)
+        if npts > 1:
+            tap_len = int(np.ceil(0.05 * 2 * npts))
+            if tap_len > 1:
+                w = np.ones(npts)
+                cos_tap = np.sin(np.linspace(0, np.pi / 2, tap_len // 2)) ** 2
+                w[:len(cos_tap)] = cos_tap
+                w[-len(cos_tap):] = cos_tap[::-1]
+                data = data * w
+
+        if "BandPass" in f_type and 0 < low < high < nyq:
+            sos = butter(4, [low / nyq, high / nyq], btype="bandpass", output="sos")
+            tr.data = sosfiltfilt(sos, data)
+        elif "LowPass" in f_type and 0 < high < nyq:
+            sos = butter(4, high / nyq, btype="lowpass", output="sos")
+            tr.data = sosfiltfilt(sos, data)
+        elif "HighPass" in f_type and 0 < low < nyq:
+            sos = butter(4, low / nyq, btype="highpass", output="sos")
+            tr.data = sosfiltfilt(sos, data)
+
 def apply_preprocessing(stream, params):
     """
     Apply detrending, demeaning, and filtering to the ObsPy stream.
@@ -68,7 +97,10 @@ def apply_preprocessing(stream, params):
             st.taper(max_percentage=0.05, type="cosine")
             st.filter("highpass", freq=low, zerophase=True)
     except Exception as e:
-        print(f"Error while filtering: {e}")
+        try:
+            _scipy_filter_fallback(st, f_type, low, high)
+        except Exception as fallback_err:
+            print(f"Error while filtering: {e} (fallback: {fallback_err})")
 
     return st
 

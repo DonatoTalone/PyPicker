@@ -5,7 +5,18 @@ os.environ["QT_API"] = "pyqt6"
 
 from PyInstaller.utils.hooks import collect_all, copy_metadata
 
-datas, binaries, hiddenimports = collect_all('obspy')
+datas = []
+binaries = []
+hiddenimports = []
+
+for pkg in ['obspy', 'matplotlib', 'pyqtgraph', 'scipy']:
+    try:
+        d, b, h = collect_all(pkg)
+        datas += d
+        binaries += b
+        hiddenimports += h
+    except Exception:
+        pass
 
 # Collect distribution metadata for dependencies so pkg_resources/importlib.metadata can find them
 pkgs_metadata = [
@@ -21,7 +32,11 @@ for pkg in pkgs_metadata:
     except Exception:
         pass
 
-hiddenimports += ['decorator', 'greenlet', 'requests', 'urllib3', 'lxml', 'lxml.etree']
+hiddenimports += [
+    'decorator', 'greenlet', 'requests', 'urllib3', 'lxml', 'lxml.etree',
+    'obspy.signal', 'obspy.signal.filter', 'obspy.signal.invsim', 'obspy.signal.headers',
+    'obspy.taup', 'obspy.imaging', 'obspy.imaging.cm', 'matplotlib.colormaps'
+]
 
 obspy_dir = os.path.dirname(obspy.__file__)
 rel_ver = os.path.join(obspy_dir, 'RELEASE-VERSION')

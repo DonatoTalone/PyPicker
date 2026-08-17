@@ -462,6 +462,10 @@ class SeismicPickerQT(QMainWindow):
         if hasattr(self, "win"):
             self.win.setBackground(bg_color)
 
+        if hasattr(self, "shortcuts_label"):
+            self.shortcuts_label.setStyleSheet(f"font-size: 11px; color: {fg_color};")
+            self.update_shortcuts_reminder()
+
         if hasattr(self, "plots") and self.plots:
             self.update_plots()
 
@@ -481,16 +485,17 @@ class SeismicPickerQT(QMainWindow):
             "save_sac": "Save SAC",
             "export_csv": "Export Picks",
         }
+        fg = getattr(self, "fg_color", "#ffffff")
         items = []
         for key, desc in descriptions.items():
             if key in sc_config:
                 val = sc_config[key]
-                items.append(f"<b>{val}</b>: {desc}")
+                items.append(f"<span style='color:{fg};'><b>{val}</b>: {desc}</span>")
         
         if items:
             text = "<br>".join(items)
         else:
-            text = "<i>No shortcuts configured</i>"
+            text = f"<i style='color:{fg};'>No shortcuts configured</i>"
             
         self.shortcuts_label.setText(text)
 
@@ -675,7 +680,9 @@ class SeismicPickerQT(QMainWindow):
 
                 if self.view_wave.isChecked():
                     dur = tr.stats.npts * tr.stats.delta
-                    data_max = np.max(np.abs(tr.data)) if len(tr.data) > 0 else 1
+                    data_max = float(np.max(np.abs(tr.data))) if len(tr.data) > 0 else 1.0
+                    if not np.isfinite(data_max) or data_max <= 0:
+                        data_max = 1.0
                     p.setLimits(
                         xMin=0,
                         xMax=dur,
@@ -720,13 +727,17 @@ class SeismicPickerQT(QMainWindow):
                 else:
                     # Spectrum view
                     f, s = utils.get_spectrum(tr)
-                    f_max = max(f)
-                    s_max = max(s)
-                    p.setLimits(xMin=0, xMax=f_max)
-                    p.setXRange(0, f_max, padding=0)
-                    p.setLimits(yMin=0, yMax=s_max)
-                    p.setXRange(0, s_max, padding=0)
-                    p.plot(f, s, pen=pg.mkPen(color))
+                    if len(f) > 0 and len(s) > 0:
+                        f_max = float(np.max(f))
+                        s_max = float(np.max(s))
+                        if not np.isfinite(f_max) or f_max <= 0:
+                            f_max = 1.0
+                        if not np.isfinite(s_max) or s_max <= 0:
+                            s_max = 1.0
+                        p.setLimits(xMin=0, xMax=f_max, yMin=0, yMax=s_max * 10)
+                        p.setXRange(0, f_max, padding=0)
+                        p.setYRange(0, s_max, padding=0)
+                        p.plot(f, s, pen=pg.mkPen(color))
                     scale = self.spec_scale.currentText()
                     p.setLogMode(
                         "Log" in scale.split("-")[0], "Log" in scale.split("-")[1]

@@ -39,35 +39,6 @@ def load_config(filename="config.json"):
             print(f"Error loading config: {e}")
     return default_config
 
-def _scipy_filter_fallback(st, f_type, low, high):
-    """Fallback filtering directly using scipy when obspy plugins fail."""
-    from scipy.signal import butter, sosfiltfilt
-    for tr in st:
-        data = tr.data.astype(np.float64)
-        df = tr.stats.sampling_rate
-        nyq = 0.5 * df
-        
-        # Apply 5% cosine taper
-        npts = len(data)
-        if npts > 1:
-            tap_len = int(np.ceil(0.05 * 2 * npts))
-            if tap_len > 1:
-                w = np.ones(npts)
-                cos_tap = np.sin(np.linspace(0, np.pi / 2, tap_len // 2)) ** 2
-                w[:len(cos_tap)] = cos_tap
-                w[-len(cos_tap):] = cos_tap[::-1]
-                data = data * w
-
-        if "BandPass" in f_type and 0 < low < high < nyq:
-            sos = butter(4, [low / nyq, high / nyq], btype="bandpass", output="sos")
-            tr.data = sosfiltfilt(sos, data)
-        elif "LowPass" in f_type and 0 < high < nyq:
-            sos = butter(4, high / nyq, btype="lowpass", output="sos")
-            tr.data = sosfiltfilt(sos, data)
-        elif "HighPass" in f_type and 0 < low < nyq:
-            sos = butter(4, low / nyq, btype="highpass", output="sos")
-            tr.data = sosfiltfilt(sos, data)
-
 def apply_preprocessing(stream, params):
     """
     Apply detrending, demeaning, and filtering to the ObsPy stream.
@@ -97,10 +68,7 @@ def apply_preprocessing(stream, params):
             st.taper(max_percentage=0.05, type="cosine")
             st.filter("highpass", freq=low, zerophase=True)
     except Exception as e:
-        try:
-            _scipy_filter_fallback(st, f_type, low, high)
-        except Exception as fallback_err:
-            print(f"Error while filtering: {e} (fallback: {fallback_err})")
+        print(f"Error while filtering: {e}")
 
     return st
 
@@ -139,10 +107,11 @@ def extract_existing_picks(stream):
         # Map: (SAC time key, SAC label key, SAC error key)
         markers = [
             ("a", "ka", "f"),
-            ("t0", "kt0", "std0"),
-            ("t1", "kt1", "std1"),
-            ("t2", "kt2", "std2"),
-            ("t3", "kt3", "std3"),
+            ("t0", "kt0", "resp0"),   # era "std0"
+            ("t1", "kt1", "resp1"),   # era "std1"
+            ("t2", "kt2", "resp2"),   # era "std2"
+            ("t3", "kt3", "resp3"),   # era "std3"
+
         ]
 
         for time_key, name_key, err_key in markers:
@@ -219,7 +188,36 @@ def extract_picks_from_csv(filename):
 def save_picks_to_sac(stream, picks):
     """
     Write picks back into the SAC headers of the loaded stream and save files.
+    Clears old picks first so that deleted picks are actually removed from the files.
     """
+    # 1. RESET: Puliamo tutti i marker dei pick preesistenti in tutte le tracce
+    for tr in stream:
+        if not hasattr(tr.stats, "sac"):
+            continue
+            
+        sac = tr.stats.sac
+        
+        # Pulisci i marker della fase P
+        for key in ["a", "f"]:
+            if key in sac:
+                sac[key] = -12345.0
+        if "ka" in sac:
+            sac["ka"] = "-12345"
+            
+        # Pulisci i marker delle fasi S e altre (t0 - t9)
+        for i in range(10):
+            t_key = f"t{i}"
+            err_key = f"resp{i}"
+            name_key = f"kt{i}"
+            
+            if t_key in sac: 
+                sac[t_key] = -12345.0
+            if err_key in sac: 
+                sac[err_key] = -12345.0
+            if name_key in sac: 
+                sac[name_key] = "-12345"
+
+    # 2. ASSEGNAZIONE: Scriviamo i pick attualmente validi
     for pk in picks:
         target_traces = stream.select(station=pk["sta"])
         unc = float(pk.get("uncertainty", 0.0))
@@ -241,20 +239,21 @@ def save_picks_to_sac(stream, picks):
             elif p_name == "S":
                 tr.stats.sac["t0"] = rel_time
                 tr.stats.sac["kt0"] = "S"
-                tr.stats.sac["std0"] = unc
+                tr.stats.sac["resp0"] = unc   # era "std0"
             else:
                 i += 1
                 if i <= 9:
                     tr.stats.sac[f"t{i}"] = rel_time
                     tr.stats.sac[f"kt{i}"] = p_name
-                    tr.stats.sac[f"std{i}"] = unc
+                    tr.stats.sac[f"resp{i}"] = unc   # era f"std{i}"
 
-            # Save to disk
-            if "filename" in tr.stats and tr.stats.filename:
-                try:
-                    tr.write(tr.stats.filename, format="SAC")
-                except Exception as e:
-                    print(f"Error saving SAC file for {tr.id}: {e}")
+    # 3. SALVATAGGIO
+    for tr in stream:
+        if "filename" in tr.stats and tr.stats.filename:
+            try:
+                tr.write(tr.stats.filename, format="SAC")
+            except Exception as e:
+                print(f"Error saving SAC file for {tr.id}: {e}")
 
 def export_to_quakeml(picks, filename):
     """

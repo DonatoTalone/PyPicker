@@ -1,3 +1,5 @@
+#modificato da GIORGIA 19/08/2026
+
 import sys
 import os
 
@@ -42,7 +44,7 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPalette, QKeySequence, QShortcut
+from PyQt6.QtGui import QPalette, QKeySequence, QShortcut, QFont
 from obspy import UTCDateTime, read, Stream
 import picker_utils_qt as utils
 
@@ -362,6 +364,8 @@ class SeismicPickerQT(QMainWindow):
 
         self.win.scene().sigMouseMoved.connect(self.on_mouse_move)
         self.win.scene().sigMouseClicked.connect(self.on_mouse_click_release)
+        # AGGIUNGI QUESTA RIGA:
+        self.table.cellChanged.connect(self.on_table_cell_changed)
 
     def setup_shortcuts(self):
         """Map keyboard shortcuts based on config.json."""
@@ -462,10 +466,6 @@ class SeismicPickerQT(QMainWindow):
         if hasattr(self, "win"):
             self.win.setBackground(bg_color)
 
-        if hasattr(self, "shortcuts_label"):
-            self.shortcuts_label.setStyleSheet(f"font-size: 11px; color: {fg_color};")
-            self.update_shortcuts_reminder()
-
         if hasattr(self, "plots") and self.plots:
             self.update_plots()
 
@@ -485,17 +485,16 @@ class SeismicPickerQT(QMainWindow):
             "save_sac": "Save SAC",
             "export_csv": "Export Picks",
         }
-        fg = getattr(self, "fg_color", "#ffffff")
         items = []
         for key, desc in descriptions.items():
             if key in sc_config:
                 val = sc_config[key]
-                items.append(f"<span style='color:{fg};'><b>{val}</b>: {desc}</span>")
+                items.append(f"<b>{val}</b>: {desc}")
         
         if items:
             text = "<br>".join(items)
         else:
-            text = f"<i style='color:{fg};'>No shortcuts configured</i>"
+            text = "<i>No shortcuts configured</i>"
             
         self.shortcuts_label.setText(text)
 
@@ -680,9 +679,7 @@ class SeismicPickerQT(QMainWindow):
 
                 if self.view_wave.isChecked():
                     dur = tr.stats.npts * tr.stats.delta
-                    data_max = float(np.max(np.abs(tr.data))) if len(tr.data) > 0 else 1.0
-                    if not np.isfinite(data_max) or data_max <= 0:
-                        data_max = 1.0
+                    data_max = np.max(np.abs(tr.data)) if len(tr.data) > 0 else 1
                     p.setLimits(
                         xMin=0,
                         xMax=dur,
@@ -727,17 +724,13 @@ class SeismicPickerQT(QMainWindow):
                 else:
                     # Spectrum view
                     f, s = utils.get_spectrum(tr)
-                    if len(f) > 0 and len(s) > 0:
-                        f_max = float(np.max(f))
-                        s_max = float(np.max(s))
-                        if not np.isfinite(f_max) or f_max <= 0:
-                            f_max = 1.0
-                        if not np.isfinite(s_max) or s_max <= 0:
-                            s_max = 1.0
-                        p.setLimits(xMin=0, xMax=f_max, yMin=0, yMax=s_max * 10)
-                        p.setXRange(0, f_max, padding=0)
-                        p.setYRange(0, s_max, padding=0)
-                        p.plot(f, s, pen=pg.mkPen(color))
+                    f_max = max(f)
+                    s_max = max(s)
+                    p.setLimits(xMin=0, xMax=f_max)
+                    p.setXRange(0, f_max, padding=0)
+                    p.setLimits(yMin=0, yMax=s_max)
+                    p.setXRange(0, s_max, padding=0)
+                    p.plot(f, s, pen=pg.mkPen(color))
                     scale = self.spec_scale.currentText()
                     p.setLogMode(
                         "Log" in scale.split("-")[0], "Log" in scale.split("-")[1]
@@ -781,6 +774,7 @@ class SeismicPickerQT(QMainWindow):
                 self.active_pick_item = pg.LinearRegionItem(
                     values=[mouse_point.x(), mouse_point.x()],
                     brush=pg.mkBrush(142, 68, 173, 100),
+                    pen=pg.mkPen("black", width=2),   # Linea nera e SPESSA 2
                     movable=False,
                 )
                 p.addItem(self.active_pick_item)
@@ -847,9 +841,9 @@ class SeismicPickerQT(QMainWindow):
         else:
             lbl_up = label.upper()
             if "P" in lbl_up:
-                main_color = "#c0392b" # Darker Red
+                main_color = "#2ecc71" 
             elif "S" in lbl_up:
-                main_color = "#2980b9" # Darker Blue
+                main_color = "magenta" 
             else:
                 main_color = c_cfg.get("pick_line", "#8e44ad")
 
@@ -867,35 +861,82 @@ class SeismicPickerQT(QMainWindow):
         line = pg.InfiniteLine(
             pos=x_pos,
             angle=90,
-            pen=pg.mkPen(main_color, width=1.5, style=style),
+            pen=pg.mkPen(main_color, width=1.7, style=style),
         )
         plot.addItem(line)
         
         text = pg.TextItem(label, color=main_color, anchor=(0, 1))
+        font = QFont()
+        font.setBold(True)
+        font.setPointSize(16)  
+        text.setFont(font)
+        # -----------------------------------
+      
         plot.addItem(text)
         text.setPos(x_pos, 0)
 
     def update_table(self):
+        # Blocchiamo i segnali per evitare loop infiniti mentre popoliamo la tabella
+        self.table.blockSignals(True) 
+        
         self.table.setRowCount(len(self.picks))
         for i, pk in enumerate(self.picks):
-            self.table.setItem(i, 0, QTableWidgetItem(pk["sta"]))
-            self.table.setItem(i, 1, QTableWidgetItem(pk["cha_source"]))
-            self.table.setItem(i, 2, QTableWidgetItem(pk["phase"]))
-            self.table.setItem(i, 3, QTableWidgetItem(pk["abs_t"].split('T')[0]))
-            self.table.setItem(i, 4, QTableWidgetItem(pk["abs_t"].split("T")[-1][:-1]))
-            self.table.setItem(i, 5, QTableWidgetItem(str(pk.get("uncertainty", 0.0))))
-            self.table.setItem(i, 6, QTableWidgetItem(pk.get("polarity", "Unknown")))
-            self.table.setItem(i, 7, QTableWidgetItem(pk.get("onset", "Unknown")))
+            items = [
+                QTableWidgetItem(pk["sta"]),
+                QTableWidgetItem(pk["cha_source"]),
+                QTableWidgetItem(pk["phase"]),
+                QTableWidgetItem(pk["abs_t"].split('T')[0]),
+                QTableWidgetItem(pk["abs_t"].split("T")[-1][:-1]),
+                QTableWidgetItem(str(pk.get("uncertainty", 0.0))), # Colonna 5: Incertezza
+                QTableWidgetItem(pk.get("polarity", "Unknown")),
+                QTableWidgetItem(pk.get("onset", "Unknown"))
+            ]
+            
+            for col, item in enumerate(items):
+                # Se è la colonna 5 (Incertezza), lasciala modificabile
+                if col == 5:
+                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+                # Altrimenti, rendila di sola lettura per evitare errori
+                else:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                
+                self.table.setItem(i, col, item)
+
             btn = QPushButton("Remove")
             btn.setStyleSheet("background-color: #a2292b; color: white;")
             btn.clicked.connect(lambda _, idx=i: self.delete_pick(idx))
             self.table.setCellWidget(i, 8, btn)
+            
+        # Riattiviamo i segnali
+        self.table.blockSignals(False)
 
     def delete_pick(self, idx):
         if 0 <= idx < len(self.picks):
             self.picks.pop(idx)
             self.update_table()
             self.update_plots()
+            
+    def on_table_cell_changed(self, row, col):
+        """Si attiva quando l'utente modifica manualmente una cella della tabella."""
+        # Controlliamo se la colonna modificata è la 5 ("Unc (s)")
+        if col == 5:
+            try:
+                # Prende il nuovo testo inserito dall'utente
+                new_val_str = self.table.item(row, col).text()
+                # Lo converte in numero float (e lo rende positivo con abs)
+                new_unc = abs(float(new_val_str)) 
+                
+                # Aggiorna il dato nella memoria del programma
+                if 0 <= row < len(self.picks):
+                    self.picks[row]["uncertainty"] = round(new_unc, 4)
+                    
+                    # Ridisegna i grafici per mostrare la nuova area di incertezza
+                    self.update_plots()
+                    
+            except ValueError:
+                # Se l'utente scrive delle lettere invece di un numero, 
+                # ignoriamo l'errore e rimettiamo a posto la tabella
+                self.update_table()        
 
     def reset_view(self):
         self.v_zoom.setValue(1)

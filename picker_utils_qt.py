@@ -1,11 +1,13 @@
-import os
-import json
 import csv
+import json
+import os
+
 import numpy as np
-from obspy import UTCDateTime, Catalog, read_events
+from obspy import Catalog, Stream, UTCDateTime, read_events
 from obspy.core.event import Event, Pick, WaveformStreamID
 from obspy.geodetics import locations2degrees
 from obspy.taup import TauPyModel
+
 
 def load_config(filename="config.json"):
     """
@@ -35,7 +37,7 @@ def load_config(filename="config.json"):
         try:
             with open(filename, "r") as f:
                 return json.load(f)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             print(f"Error loading config: {e}")
     return default_config
 
@@ -47,8 +49,13 @@ def apply_preprocessing(stream, params):
 
     if params.get("demean"):
         st.detrend("demean")
+        st.taper(max_percentage=0.05, type="cosine")
     if params.get("detrend"):
         st.detrend("linear")
+        st.taper(max_percentage=0.05, type="cosine")
+    if params.get("normalize"):
+        st = normalize_traces(st)
+        st.taper(max_percentage=0.05, type="cosine")
 
     f_type = params.get("filter_type")
     low = params.get("low_f", 1.0)
@@ -59,15 +66,15 @@ def apply_preprocessing(stream, params):
 
     try:
         if "BandPass" in f_type and low < high:
-            st.taper(max_percentage=0.05, type="cosine")
             st.filter("bandpass", freqmin=low, freqmax=high, zerophase=True)
+            st.taper(max_percentage=0.05, type="cosine")
         elif "LowPass" in f_type:
-            st.taper(max_percentage=0.05, type="cosine")
             st.filter("lowpass", freq=high, zerophase=True)
-        elif "HighPass" in f_type:
             st.taper(max_percentage=0.05, type="cosine")
+        elif "HighPass" in f_type:
             st.filter("highpass", freq=low, zerophase=True)
-    except Exception as e:
+            st.taper(max_percentage=0.05, type="cosine")
+    except Exception as e:  # noqa: BLE001
         print(f"Error while filtering: {e}")
 
     return st
@@ -190,22 +197,16 @@ def save_picks_to_sac(stream, picks):
     Write picks back into the SAC headers of the loaded stream and save files.
     Clears old picks first so that deleted picks are actually removed from the files.
     """
-    # 1. RESET: Puliamo tutti i marker dei pick preesistenti in tutte le tracce
     for tr in stream:
         if not hasattr(tr.stats, "sac"):
             continue
-            
         sac = tr.stats.sac
-        
-        # Pulisci i marker della fase P
-        for key in ["a", "f"]:
+        for key in ["a", "f"]:    # Pulisci i marker della fase P
             if key in sac:
                 sac[key] = -12345.0
         if "ka" in sac:
             sac["ka"] = "-12345"
-            
-        # Pulisci i marker delle fasi S e altre (t0 - t9)
-        for i in range(10):
+        for i in range(10):    # Pulisci i marker delle fasi S e altre (t0 - t9)
             t_key = f"t{i}"
             err_key = f"resp{i}"
             name_key = f"kt{i}"
@@ -216,21 +217,16 @@ def save_picks_to_sac(stream, picks):
                 sac[err_key] = -12345.0
             if name_key in sac: 
                 sac[name_key] = "-12345"
-
-    # 2. ASSEGNAZIONE: Scriviamo i pick attualmente validi
     for pk in picks:
         target_traces = stream.select(station=pk["sta"])
         unc = float(pk.get("uncertainty", 0.0))
-
         i = 0
         for tr in target_traces:
             if not hasattr(tr.stats, "sac"):
                 tr.stats.sac = {}
-
             pick_time = UTCDateTime(pk["abs_t"])
             rel_time = pick_time - tr.stats.starttime
             p_name = pk["phase"].upper()
-
             # Mapping logic
             if p_name == "P":
                 tr.stats.sac["a"] = rel_time
@@ -239,20 +235,18 @@ def save_picks_to_sac(stream, picks):
             elif p_name == "S":
                 tr.stats.sac["t0"] = rel_time
                 tr.stats.sac["kt0"] = "S"
-                tr.stats.sac["resp0"] = unc   # era "std0"
+                tr.stats.sac["resp0"] = unc
             else:
                 i += 1
                 if i <= 9:
                     tr.stats.sac[f"t{i}"] = rel_time
                     tr.stats.sac[f"kt{i}"] = p_name
-                    tr.stats.sac[f"resp{i}"] = unc   # era f"std{i}"
-
-    # 3. SALVATAGGIO
+                    tr.stats.sac[f"resp{i}"] = unc
     for tr in stream:
         if "filename" in tr.stats and tr.stats.filename:
             try:
                 tr.write(tr.stats.filename, format="SAC")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 print(f"Error saving SAC file for {tr.id}: {e}")
 
 def export_to_quakeml(picks, filename):
@@ -305,7 +299,7 @@ def get_epicentral_distance(tr):
     if not hasattr(tr.stats, "sac"):
         return None
     sac = tr.stats.sac
-    if "evla" in sac and "evlo" in sac and "stla" in sac and "stlo" in sac:
+    if "evla" in sac and "evlo" in sac and "stla" in sac and "stlo" in sac:  # noqa: SIM102
         if sac["evla"] != -12345.0 and sac["evlo"] != -12345.0 and sac["stla"] != -12345.0 and sac["stlo"] != -12345.0:
             return locations2degrees(sac["evla"], sac["evlo"], sac["stla"], sac["stlo"])
     return None
@@ -335,7 +329,7 @@ def reorder_stream_by_arrival(stream, picks):
         if sta not in sta_time or t < sta_time[sta]:
             sta_time[sta] = t
             
-    all_stas = list(set([tr.stats.station for tr in stream]))
+    all_stas = list({tr.stats.station for tr in stream})
     for sta in all_stas:
         if sta not in sta_time:
             sta_time[sta] = UTCDateTime(2100, 1, 1)
@@ -347,11 +341,63 @@ def reorder_stream_by_arrival(stream, picks):
         new_st += stream.select(station=sta)
     return new_st
 
+def reorder_stream_by_name(stream):
+    """Reorder stream by station name."""
+    sta_names = []
+    for tr in stream:
+        sta = tr.stats.station
+        if sta not in sta_names:
+            sta_names.append(sta)
+            
+    sta_names.sort()
+    
+    new_st = stream.__class__()
+    for sta in sta_names:
+        new_st += stream.select(station=sta)
+    return new_st
+
+def remove_pick_from_sac(stream, station, channel, phase_name):
+    "Remove a specific pick from SAC headers of matching traces by setting them to -12345.0"
+    target_traces = stream.select(station=station, channel=channel)
+    if not target_traces:
+        target_traces = stream.select(station=station)
+
+    p_name = phase_name.upper()
+    for tr in target_traces:
+        if not hasattr(tr.stats, "sac"):
+            continue
+        sac = tr.stats.sac
+        if p_name == "P":
+            if sac.get("ka", "").strip().upper() == "P" or "a" in sac:
+                sac["a"] = -12345.0
+                sac["ka"] = "-12345"
+                sac["f"] = -12345.0
+        elif p_name == "S":  # noqa: SIM102
+            if sac.get("kt0", "").strip().upper() == "S" or "t0" in sac:
+                sac["t0"] = -12345.0
+                sac["kt0"] = "-12345"
+                sac["resp0"] = -12345.0
+
+        for i in range(10):
+            name_key = f"kt{i}"
+            t_key = f"t{i}"
+            err_key = f"resp{i}"
+            if sac.get(name_key, "").strip().upper() == p_name:
+                sac[t_key] = -12345.0
+                sac[name_key] = "-12345"
+                sac[err_key] = -12345.0
+
+        if "filename" in tr.stats and tr.stats.filename:
+            try:
+                tr.write(tr.stats.filename, format="SAC")
+            except Exception as e:  # noqa: BLE001
+                print(f"Error updating SAC file after pick deletion: {e}")
+
 def calculate_theoretical_arrivals(stream, model_name="iasp91"):
     """Calculate theoretical P and S arrivals for each station."""
     try:
         model = TauPyModel(model=model_name)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         print(f"Error loading velocity model {model_name}: {e}")
         return {}
         
@@ -360,10 +406,10 @@ def calculate_theoretical_arrivals(stream, model_name="iasp91"):
         sta = tr.stats.station
         if sta in arrivals:
             continue
-            
+
         if not hasattr(tr.stats, "sac"):
             continue
-            
+
         sac = tr.stats.sac
         if all(k in sac and sac[k] != -12345.0 for k in ["evla", "evlo", "stla", "stlo", "evdp"]):
             dist_deg = locations2degrees(sac["evla"], sac["evlo"], sac["stla"], sac["stlo"])
@@ -384,7 +430,25 @@ def calculate_theoretical_arrivals(stream, model_name="iasp91"):
                             sta_arrs[ph.upper()] = origin_time + a.time
                     
                     arrivals[sta] = sta_arrs
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 print(f"Error calculating travel times for {sta}: {e}")
                 
     return arrivals
+
+def normalize_traces(stream):
+    "Normalize stream traces."
+    new_stream = Stream()
+    data_max = 0
+    for tr in stream:
+        if len(tr.data) > 0:
+            d_max = np.max(np.abs(tr.data))
+            data_max = max(d_max, data_max)
+    if data_max == 0:
+        data_max = 1.0
+    for tr in stream:
+        new_tr = tr.copy()
+        if len(new_tr.data) > 0:
+            new_tr.data = new_tr.data.astype(np.float64) / data_max
+        new_stream.append(new_tr)
+    return new_stream
+

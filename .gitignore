@@ -10,3 +10,4 @@ seismic_picker_qt.build
 seismic_picker_qt.dist
 .obspyck_repo
 .venv
+.vscode

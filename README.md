@@ -8,15 +8,16 @@ It is partially written by Gemini 3.6 Flash (High) Antigravity.
 ## Features
 - **Waveform Visualization:** Load SAC, MSEED, and other formats supported by ObsPy.
 - **Spectrum Analysis:** Toggle between time-domain waveforms and frequency-domain spectra (Log/Lin scales).
-- **Signal Processing:** Integrated demeaning, detrending, and filtering (HighPass, LowPass, BandPass).
+- **Signal Processing:** Integrated demeaning, detrending, and filtering (HighPass, LowPass, BandPass). Signals can be normalized using maximum amplitude for each station.
 - **Interactive Picking:** 
   - Single-click to pick arrival times.
   - Drag vertically while picking to define uncertainty.
   - Supports P, S, and custom phase labels.
   - Set Polarity (Up/Down) and Onset (Emergent/Impulsive) attributes.
   - Two picking modes ("Sidebar" or "Popup") to streamline metadata entry.
-- **Station Reordering:** Dynamically sort stations by Epicentral Distance or earliest P/S arrival.
+- **Station Reordering:** Dynamically sort stations by Station Name, Epicentral Distance or earliest P/S arrival.
 - **Theoretical Arrivals:** Automatically calculate and plot theoretical travel times (P and S) using `obspy.taup` and the velocity model defined in `config.json` (e.g. `iasp91`).
+- **Interactive Pick Table:** The table is populated while picking arrivals. Values are editable and contemporaneusly updated in the plot.
 - **Data Export & Import:** Save picks back into SAC headers, export a picking summary to CSV, or Import/Export fully compliant **QuakeML** files.
 - **Customizable:** Use `config.json` to define keyboard shortcuts and UI colors.
 

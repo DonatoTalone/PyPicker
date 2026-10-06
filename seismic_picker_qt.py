@@ -203,12 +203,6 @@ class SeismicPickerQT(QMainWindow):
         self.theme_sel.addItems(["System", "Dark", "Light"])
         left_sidebar.addWidget(self.theme_sel)
 
-        left_sidebar.addWidget(QLabel("<b>Gain:</b>"))
-        self.v_zoom = QSlider(Qt.Orientation.Horizontal)
-        self.v_zoom.setRange(1, 100)
-        self.v_zoom.setValue(1)
-        left_sidebar.addWidget(self.v_zoom)
-
         self.btn_reset = QPushButton("Reset Zoom")
         self.btn_reset.clicked.connect(self.reset_view)
         self.btn_reset.setStyleSheet(
@@ -368,7 +362,6 @@ class SeismicPickerQT(QMainWindow):
         self.filt_sel.currentIndexChanged.connect(self.update_plots)
         self.f_low.valueChanged.connect(self.update_plots)
         self.f_high.valueChanged.connect(self.update_plots)
-        self.v_zoom.valueChanged.connect(self.update_gain)
         self.show_theo.stateChanged.connect(self.update_plots)
         self.theme_sel.currentTextChanged.connect(self.apply_theme)
 
@@ -507,14 +500,40 @@ class SeismicPickerQT(QMainWindow):
             
         self.shortcuts_label.setText(text)
 
+    def _trace_key(self, tr):
+        """Identify a trace: same id, start time and length = same data."""
+        return (tr.id, tr.stats.starttime.ns, tr.stats.npts)
+
+    def _ask_load_mode(self, n_new):
+        """Ask whether to add new traces to the session or replace it.
+        Returns "append", "overwrite" or None (cancelled)."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Open Waveforms")
+        box.setText(f"A session with {len(self.original_stream)} traces is already open.")
+        box.setInformativeText(
+            f"Add the {n_new} new traces to it, or replace the current session?"
+        )
+        btn_add = box.addButton("Add to session", QMessageBox.ButtonRole.AcceptRole)
+        btn_over = box.addButton("Overwrite", QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(btn_add)
+        box.exec()
+
+        clicked = box.clickedButton()
+        if clicked is btn_add:
+            return "append"
+        if clicked is btn_over:
+            return "overwrite"
+        return None
+
     def open_files(self):
         """Load seismic data from disk."""
         files, _ = QFileDialog.getOpenFileNames(
             self,
             "Select Waveforms",
             "",
-            "Waveforms (*.sac *.mseed *.dat);;All Files (*)",
-        )
+            "Waveforms (*.sac *.mseed *.dat);;All Files (*)",)
         if files:
             new_st = Stream()
             for f in files:
@@ -526,11 +545,47 @@ class SeismicPickerQT(QMainWindow):
                 except Exception as e:  # noqa: BLE001
                     print(f"Error while loading waveforms: {e}")
                     continue
-            if new_st:
+
+            if not new_st:
+                return
+            mode = "overwrite"
+            if self.original_stream:
+                mode = self._ask_load_mode(len(new_st))
+                if mode is None:
+                    return
+            if mode == "overwrite":
                 self.original_stream = new_st
                 self.base_stream = new_st.copy()
                 self.picks = utils.extract_existing_picks(self.original_stream)
                 self._setup_after_load()
+                return
+            known = {self._trace_key(tr) for tr in self.original_stream}
+            to_add = Stream()
+            for tr in new_st:
+                k = self._trace_key(tr)
+                if k not in known:
+                    known.add(k)
+                    to_add.append(tr)
+            n_skipped = len(new_st) - len(to_add)
+            if not to_add:
+                QMessageBox.information(
+                    self, "Open Waveforms", 
+                    "All selected traces are already in the session.")
+                return
+            
+            base = getattr(self, "base_stream", None)
+            if not base:
+                base = self.original_stream.copy()
+            base_keys = {self._trace_key(tr) for tr in base}
+            base.extend([tr.copy() for tr in to_add if self._trace_key(tr) not in base_keys])
+            self.base_stream = base
+            self.original_stream.extend(to_add.traces)
+            self.picks.extend(utils.extract_existing_picks(to_add))
+            self._setup_after_load(target_idx=self.sta_sel.currentIndex())
+            if n_skipped:
+                QMessageBox.information(
+                    self, "Open Waveforms", 
+                    f"{n_skipped} duplicate traces were skipped.")
 
     def clear_all_data(self):
         if not self.original_stream:
@@ -599,6 +654,9 @@ class SeismicPickerQT(QMainWindow):
         if reply == QMessageBox.StandardButton.Yes:
             self.original_stream = Stream(
                 [tr for tr in self.original_stream if tr.stats.station != sta]
+            )
+            self.base_stream = Stream(
+                [tr for tr in self.base_stream if tr.stats.station != sta]
             )
             self.picks = [p for p in self.picks if p["sta"] != sta]
             self._setup_after_load(target_idx=idx)
@@ -690,6 +748,8 @@ class SeismicPickerQT(QMainWindow):
                 if self.view_wave.isChecked():
                     dur = tr.stats.npts * tr.stats.delta
                     data_max = np.max(np.abs(tr.data)) if len(tr.data) > 0 else 1
+                    if not np.isfinite(data_max) or data_max <= 0:
+                        data_max = 1.0
                     p.setLimits(
                         xMin=0,
                         xMax=dur,
@@ -700,6 +760,10 @@ class SeismicPickerQT(QMainWindow):
                         p.setXRange(old_view_range[0][0], old_view_range[0][1], padding=0)
                     else:
                         p.setXRange(0, dur, padding=0)
+                    if self.normalize.isChecked():
+                        p.setYRange(-1, 1)
+                    else:
+                        p.setYRange(-data_max, data_max)
                     p.plot(tr.times(), tr.data, pen=pg.mkPen(color, width=1.2))
                     p.meta = {
                         "sta": tr.stats.station,
@@ -755,6 +819,7 @@ class SeismicPickerQT(QMainWindow):
 
                     f_min, f_max = np.min(f_plot), np.max(f_plot)
                     s_min, s_max = np.min(s_plot), np.max(s_plot)
+                    p.plot(f_plot, s_plot, pen=pg.mkPen(color))                    
 
                     if log_x:
                         p.setXRange(np.log10(f_min), np.log10(f_max), padding=0.05)
@@ -770,7 +835,6 @@ class SeismicPickerQT(QMainWindow):
                     else:
                         p.setYRange(0, s_max * 1.05, padding=0)
                         p.setLimits(yMin=0, yMax=s_max * 1.5)
-                    p.plot(f_plot, s_plot, pen=pg.mkPen(color))
 
                 # Draw channel name
                 fill_col = (255, 255, 255, 180) if self._is_light_bg(getattr(self, "current_bg", "#1e1e1e")) else (0, 0, 0, 180)
@@ -785,7 +849,6 @@ class SeismicPickerQT(QMainWindow):
                 label.setPos(p.vb.boundingRect().width() - 20, 0)
 
                 self.plots.append(p)
-        self.update_gain()
 
     def _start_picking(self, scene_pos):
         target_p = None
@@ -1011,18 +1074,7 @@ class SeismicPickerQT(QMainWindow):
             self.update_table()      
 
     def reset_view(self):
-        self.v_zoom.setValue(1)
         self.update_plots(reset_zoom=True)
-
-    def update_gain(self):
-        gain = self.v_zoom.value()
-        for p in self.plots:
-            items = p.listDataItems()
-            if items:
-                y = items[0].yData
-                if y is not None and len(y) > 0:
-                    amp = np.max(np.abs(y)) or 1
-                    p.setYRange(-amp / gain, amp / gain)
 
     def import_picks(self):
         path, _ = QFileDialog.getOpenFileName(

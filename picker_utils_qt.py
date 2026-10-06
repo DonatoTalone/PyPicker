@@ -46,37 +46,46 @@ def apply_preprocessing(stream, params):
     Apply detrending, demeaning, and filtering to the ObsPy stream.
     """
     st = stream.copy()
+    dm, dt, norm, f = 0, 0, 0, 0
 
     if params.get("demean"):
         st.detrend("demean")
-        st.taper(max_percentage=0.05, type="cosine")
+        dm = 1
     if params.get("detrend"):
         st.detrend("linear")
-        st.taper(max_percentage=0.05, type="cosine")
+        dt = 1
     if params.get("normalize"):
+        if dm != 1:
+            st.detrend("demean")
+        if dt != 1:
+            st.detrend("linear")
         st = normalize_traces(st)
-        st.taper(max_percentage=0.05, type="cosine")
+        norm = 1
 
     f_type = params.get("filter_type")
     low = params.get("low_f", 1.0)
     high = params.get("high_f", 20.0)
 
     if f_type == "None" or not f_type:
+        if dm == 1 or dt == 1 or norm == 1:
+            st.taper(max_percentage=0.05, type="cosine")
         return st
 
     try:
         if "BandPass" in f_type and low < high:
             st.filter("bandpass", freqmin=low, freqmax=high, zerophase=True)
-            st.taper(max_percentage=0.05, type="cosine")
+            f = 1
         elif "LowPass" in f_type:
             st.filter("lowpass", freq=high, zerophase=True)
-            st.taper(max_percentage=0.05, type="cosine")
+            f = 1
         elif "HighPass" in f_type:
             st.filter("highpass", freq=low, zerophase=True)
-            st.taper(max_percentage=0.05, type="cosine")
+            f = 1
     except Exception as e:  # noqa: BLE001
         print(f"Error while filtering: {e}")
 
+    if dm == 1 or dt == 1 or norm == 1 or f == 1:
+        st.taper(max_percentage=0.05, type="cosine")
     return st
 
 def get_spectrum(trace):
@@ -437,18 +446,25 @@ def calculate_theoretical_arrivals(stream, model_name="iasp91"):
 
 def normalize_traces(stream):
     "Normalize stream traces."
-    new_stream = Stream()
-    data_max = 0
-    for tr in stream:
-        if len(tr.data) > 0:
-            d_max = np.max(np.abs(tr.data))
-            data_max = max(d_max, data_max)
-    if data_max == 0:
-        data_max = 1.0
-    for tr in stream:
-        new_tr = tr.copy()
-        if len(new_tr.data) > 0:
-            new_tr.data = new_tr.data.astype(np.float64) / data_max
-        new_stream.append(new_tr)
-    return new_stream
 
+    from collections import defaultdict
+    
+    new_stream = stream.copy()
+    station_max = defaultdict(float)
+
+    for tr in new_stream:
+        station = tr.stats.station
+        d = tr.data[np.isfinite(tr.data)]
+        if d.size > 0:
+            trace_max = np.max(np.abs(d))
+            station_max[station] = max(station_max[station], trace_max)
+    
+    for tr in new_stream:
+        station = tr.stats.station
+        data_max = station_max.get(station, 1.0)
+        if data_max == 0:
+            data_max = 1.0
+        if len(tr.data) > 0:
+            tr.data = tr.data.astype(np.float64) / data_max
+    
+    return new_stream

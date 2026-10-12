@@ -1,9 +1,10 @@
 import csv
 import json
 import os
+from datetime import datetime, timedelta
 
 import numpy as np
-from obspy import Catalog, Stream, UTCDateTime, read_events
+from obspy import Catalog, UTCDateTime, read_events
 from obspy.core.event import Event, Pick, WaveformStreamID
 from obspy.geodetics import locations2degrees
 from obspy.taup import TauPyModel
@@ -159,26 +160,6 @@ def extract_existing_picks(stream):
                     seen_identifiers.add(pick_id)
     return found_picks
 
-def export_to_csv(picks, filename):
-    """
-    Export the pick list to a CSV file.
-    """
-    with open(filename, "w", newline="") as f:
-        writer = csv.writer(f, delimiter=";")
-        writer.writerow(["Station", "Channel", "Phase", "UTC_Time", "Uncertainty_sec", "Polarity", "Onset"])
-        for p in picks:
-            writer.writerow(
-                [
-                    p["sta"],
-                    p["cha_source"],
-                    p["phase"],
-                    p["abs_t"],
-                    p.get("uncertainty", 0.0),
-                    p.get("polarity", "Unknown"),
-                    p.get("onset", "Unknown"),
-                ]
-            )
-
 def extract_picks_from_csv(filename):
     """
     Extract the pick list from a CSV file.
@@ -200,6 +181,73 @@ def extract_picks_from_csv(filename):
                 }
                 picks.append(pk)
     return picks
+
+def extract_picks_from_seisgram_pick(filename):
+    """
+    Extract the pick list from a .pick file created by Seisgram2k.
+    """
+    _ONSET_MAP = {"i": "impulsive", "e": "emergent"}
+    _POLARITY_MAP = {"c": "positive", "u": "positive", "+": "positive",
+        "d": "negative", "-": "negative",}
+    picks = []
+    with open(filename, "r") as f:
+        for line in f:
+            row = line.split()
+            if len(row) < 9:
+                continue
+            t0 = datetime.strptime(row[6] + row[7], "%Y%m%d%H%M")
+            abs_t = t0 + timedelta(seconds=float(row[8]))
+            pk = {
+                "sta": row[0],
+                "cha_source": row[2],
+                "phase": row[4],
+                "abs_t": abs_t.isoformat(timespec="milliseconds"),
+                "uncertainty": float(row[10]) if len(row) > 10 else 0.0,
+                "polarity": _POLARITY_MAP.get(row[5].lower(), "Unknown"),
+                "onset": _ONSET_MAP.get(row[3].lower(), "Unknown"),
+            }
+            picks.append(pk)
+    return picks
+
+def extract_picks_from_quakeml(filename):
+    """
+    Extract picks from a QuakeML file.
+    """
+    cat = read_events(filename)
+    picks = []
+    for event in cat:
+        for pick in event.picks:
+            pk = {
+                "sta": pick.waveform_id.station_code if pick.waveform_id else "",
+                "cha_source": pick.waveform_id.channel_code if pick.waveform_id else "",
+                "phase": pick.phase_hint if pick.phase_hint else "",
+                "abs_t": str(pick.time),
+                "uncertainty": pick.time_errors.uncertainty if pick.time_errors and pick.time_errors.uncertainty else 0.0,
+                "polarity": pick.polarity.capitalize() if pick.polarity else "Unknown",
+                "onset": pick.onset.capitalize() if pick.onset else "Unknown"
+            }
+            picks.append(pk)
+    return picks
+
+def export_to_csv(picks, filename):
+    """
+    Export the pick list to a CSV file.
+    """
+    with open(filename, "w", newline="") as f:
+        writer = csv.writer(f, delimiter=";")
+        writer.writerow(["Station", "Channel", "Phase", "UTC_Time", "Uncertainty_sec", "Polarity", "Onset"])
+        for p in picks:
+            writer.writerow(
+                [
+                    p["sta"],
+                    p["cha_source"],
+                    p["phase"],
+                    p["abs_t"],
+                    p.get("uncertainty", 0.0),
+                    p.get("polarity", "Unknown"),
+                    p.get("onset", "Unknown"),
+                ]
+            )
 
 def save_picks_to_sac(stream, picks):
     """
@@ -282,26 +330,6 @@ def export_to_quakeml(picks, filename):
     
     cat.append(event)
     cat.write(filename, format="QUAKEML")
-
-def extract_picks_from_quakeml(filename):
-    """
-    Extract picks from a QuakeML file.
-    """
-    cat = read_events(filename)
-    picks = []
-    for event in cat:
-        for pick in event.picks:
-            pk = {
-                "sta": pick.waveform_id.station_code if pick.waveform_id else "",
-                "cha_source": pick.waveform_id.channel_code if pick.waveform_id else "",
-                "phase": pick.phase_hint if pick.phase_hint else "",
-                "abs_t": str(pick.time),
-                "uncertainty": pick.time_errors.uncertainty if pick.time_errors and pick.time_errors.uncertainty else 0.0,
-                "polarity": pick.polarity.capitalize() if pick.polarity else "Unknown",
-                "onset": pick.onset.capitalize() if pick.onset else "Unknown"
-            }
-            picks.append(pk)
-    return picks
 
 def get_epicentral_distance(tr):
     """Calculate epicentral distance in degrees from SAC headers if available."""

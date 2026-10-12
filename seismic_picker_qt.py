@@ -37,7 +37,6 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
-    QSlider,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -333,6 +332,7 @@ class SeismicPickerQT(QMainWindow):
         self.table.setHorizontalHeaderLabels(
             ["Sta", "Cha", "Phase", "Date", "Time", "Unc (s)", "Polarity", "Onset", "Action"]
         )
+        self.table.setSortingEnabled(True)
         self.table.horizontalHeader().setSectionResizeMode(  # ty: ignore[unresolved-attribute]
             QHeaderView.ResizeMode.Stretch
         )
@@ -985,6 +985,7 @@ class SeismicPickerQT(QMainWindow):
     def update_table(self):
         # Blocchiamo i segnali per evitare loop infiniti mentre popoliamo la tabella
         self.table.blockSignals(True) 
+        self.table.setSortingEnabled(False)
         
         self.table.setRowCount(len(self.picks))
         for i, pk in enumerate(self.picks):
@@ -1010,6 +1011,7 @@ class SeismicPickerQT(QMainWindow):
             
         # Riattiviamo i segnali
         self.table.blockSignals(False)
+        self.table.setSortingEnabled(True)
 
     def delete_pick(self, idx):
         if 0 <= idx < len(self.picks):
@@ -1078,14 +1080,18 @@ class SeismicPickerQT(QMainWindow):
 
     def import_picks(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Import Picks", "", "QuakeML (*.qml *.xml);;CSV Files (*.csv)"
+            self, "Import Picks", "", "QuakeML (*.qml *.xml);;CSV Files (*.csv);;Seisgram2k pick (*.pick)"
         )
         if path:
             try:
                 if path.endswith('.csv'):
                     new_picks = utils.extract_picks_from_csv(path)
-                else:
+                elif path.endswith('.pick'):
+                    new_picks = utils.extract_picks_from_seisgram_pick(path)
+                elif path.endswith(('.qml', '.xml')):
                     new_picks = utils.extract_picks_from_quakeml(path)
+                else:
+                    QMessageBox.critical(self, "Error", "Unsupported picking format")
                 self.picks.extend(new_picks)
                 self.update_table()
                 self.update_plots()

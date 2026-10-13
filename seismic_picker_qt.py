@@ -19,6 +19,7 @@ from obspy import Stream, UTCDateTime, read
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QKeySequence, QPalette, QShortcut
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -333,6 +334,7 @@ class SeismicPickerQT(QMainWindow):
             ["Sta", "Cha", "Phase", "Date", "Time", "Unc (s)", "Polarity", "Onset", "Action"]
         )
         self.table.setSortingEnabled(True)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.EditKeyPressed)
         self.table.horizontalHeader().setSectionResizeMode(  # ty: ignore[unresolved-attribute]
             QHeaderView.ResizeMode.Stretch
         )
@@ -368,6 +370,7 @@ class SeismicPickerQT(QMainWindow):
         self.win.scene().sigMouseMoved.connect(self.on_mouse_move)  # ty: ignore[unresolved-attribute]
         self.win.scene().sigMouseClicked.connect(self.on_mouse_click_release)  # ty: ignore[unresolved-attribute]
         self.table.cellChanged.connect(self.on_table_cell_changed)
+        self.table.cellDoubleClicked.connect(self.on_table_row_double_clicked)
 
     def setup_shortcuts(self):
         """Map keyboard shortcuts based on config.json."""
@@ -1001,7 +1004,11 @@ class SeismicPickerQT(QMainWindow):
             ]
             
             for col, item in enumerate(items):
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+                item.setData(Qt.ItemDataRole.UserRole, i)
+                if col in (0, 1):
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                else:
+                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
                 self.table.setItem(i, col, item)
 
             btn = QPushButton("Remove")
@@ -1027,14 +1034,15 @@ class SeismicPickerQT(QMainWindow):
             self.update_plots()
             
     def on_table_cell_changed(self, row, col):
-        """Si attiva quando l'utente modifica manualmente una cella della tabella."""
-        if not (0 <= row < len(self.picks)):
+        """Apply changes made in the table to the corresponding pick data."""
+        pk_idx = self._pick_index_from_row(row)
+        if pk_idx is None:
             return
         item = self.table.item(row, col)
         if not item:
             return
         new_text = item.text().strip()
-        pk = self.picks[row]
+        pk = self.picks[pk_idx]
 
         try:
             if col == 0:    # Colonna 0: Stazione (Sta)
@@ -1074,6 +1082,49 @@ class SeismicPickerQT(QMainWindow):
         except Exception as e:  # noqa: BLE001
             print(f"Error in the format: {e}")
             self.update_table()      
+
+    def _pick_index_from_row(self, row):
+        """Convert selected row in the table to the corresponding index in self.picks."""
+        item = self.table.item(row, 0)
+        if item is None:
+            return None
+        idx = item.data(Qt.ItemDataRole.UserRole)
+        if idx is None or not (0 <= idx < len(self.picks)):
+            return None
+        return idx
+
+    def on_table_row_double_clicked(self, row, _col):
+        """Show the waveform for the pick in the selected row."""
+        idx = self._pick_index_from_row(row)
+        if idx is None:
+            return
+        pk = self.picks[idx]
+
+        sta_idx = next(
+            (i for i, s in enumerate(self.stations) if s["sta"] == pk["sta"]), -1
+        )
+        if sta_idx < 0:
+            QMessageBox.information(
+                self, "Station not found", f"No waveform loaded for station {pk['sta']}."
+            )
+            return
+
+        widgets = (self.view_mode, self.sta_sel, self.view_wave)
+        for w in widgets:
+            w.blockSignals(True)
+        self.view_mode.setCurrentText("Single Station")
+        self.sta_sel.setCurrentIndex(sta_idx)
+        self.view_wave.setChecked(True)
+        for w in widgets:
+            w.blockSignals(False)
+        self.update_plots(reset_zoom=True)
+
+        if self.plots:
+            t = UTCDateTime(pk["abs_t"]) - self.plots[0].meta["st"]
+            x0, x1 = self.plots[0].viewRange()[0]
+            if x0 <= t <= x1:
+                half = (x1 - x0) * 0.05
+                self.plots[0].setXRange(max(x0, t - half), min(x1, t + half), padding=0)
 
     def reset_view(self):
         self.update_plots(reset_zoom=True)

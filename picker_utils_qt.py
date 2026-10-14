@@ -1,11 +1,14 @@
-import os
-import json
 import csv
+import json
+import os
+from datetime import datetime, timedelta
+
 import numpy as np
-from obspy import UTCDateTime, Catalog, read_events
+from obspy import Catalog, UTCDateTime, read_events
 from obspy.core.event import Event, Pick, WaveformStreamID
 from obspy.geodetics import locations2degrees
 from obspy.taup import TauPyModel
+
 
 def load_config(filename="config.json"):
     """
@@ -35,73 +38,55 @@ def load_config(filename="config.json"):
         try:
             with open(filename, "r") as f:
                 return json.load(f)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             print(f"Error loading config: {e}")
     return default_config
-
-def _scipy_filter_fallback(st, f_type, low, high):
-    """Fallback filtering directly using scipy when obspy plugins fail."""
-    from scipy.signal import butter, sosfiltfilt
-    for tr in st:
-        data = tr.data.astype(np.float64)
-        df = tr.stats.sampling_rate
-        nyq = 0.5 * df
-        
-        # Apply 5% cosine taper
-        npts = len(data)
-        if npts > 1:
-            tap_len = int(np.ceil(0.05 * 2 * npts))
-            if tap_len > 1:
-                w = np.ones(npts)
-                cos_tap = np.sin(np.linspace(0, np.pi / 2, tap_len // 2)) ** 2
-                w[:len(cos_tap)] = cos_tap
-                w[-len(cos_tap):] = cos_tap[::-1]
-                data = data * w
-
-        if "BandPass" in f_type and 0 < low < high < nyq:
-            sos = butter(4, [low / nyq, high / nyq], btype="bandpass", output="sos")
-            tr.data = sosfiltfilt(sos, data)
-        elif "LowPass" in f_type and 0 < high < nyq:
-            sos = butter(4, high / nyq, btype="lowpass", output="sos")
-            tr.data = sosfiltfilt(sos, data)
-        elif "HighPass" in f_type and 0 < low < nyq:
-            sos = butter(4, low / nyq, btype="highpass", output="sos")
-            tr.data = sosfiltfilt(sos, data)
 
 def apply_preprocessing(stream, params):
     """
     Apply detrending, demeaning, and filtering to the ObsPy stream.
     """
     st = stream.copy()
+    dm, dt, norm, f = 0, 0, 0, 0
 
     if params.get("demean"):
         st.detrend("demean")
+        dm = 1
     if params.get("detrend"):
         st.detrend("linear")
+        dt = 1
+    if params.get("normalize"):
+        if dm != 1:
+            st.detrend("demean")
+        if dt != 1:
+            st.detrend("linear")
+        st = normalize_traces(st)
+        norm = 1
 
     f_type = params.get("filter_type")
     low = params.get("low_f", 1.0)
     high = params.get("high_f", 20.0)
 
     if f_type == "None" or not f_type:
+        if dm == 1 or dt == 1 or norm == 1:
+            st.taper(max_percentage=0.05, type="cosine")
         return st
 
     try:
         if "BandPass" in f_type and low < high:
-            st.taper(max_percentage=0.05, type="cosine")
             st.filter("bandpass", freqmin=low, freqmax=high, zerophase=True)
+            f = 1
         elif "LowPass" in f_type:
-            st.taper(max_percentage=0.05, type="cosine")
             st.filter("lowpass", freq=high, zerophase=True)
+            f = 1
         elif "HighPass" in f_type:
-            st.taper(max_percentage=0.05, type="cosine")
             st.filter("highpass", freq=low, zerophase=True)
-    except Exception as e:
-        try:
-            _scipy_filter_fallback(st, f_type, low, high)
-        except Exception as fallback_err:
-            print(f"Error while filtering: {e} (fallback: {fallback_err})")
+            f = 1
+    except Exception as e:  # noqa: BLE001
+        print(f"Error while filtering: {e}")
 
+    if dm == 1 or dt == 1 or norm == 1 or f == 1:
+        st.taper(max_percentage=0.05, type="cosine")
     return st
 
 def get_spectrum(trace):
@@ -139,10 +124,11 @@ def extract_existing_picks(stream):
         # Map: (SAC time key, SAC label key, SAC error key)
         markers = [
             ("a", "ka", "f"),
-            ("t0", "kt0", "std0"),
-            ("t1", "kt1", "std1"),
-            ("t2", "kt2", "std2"),
-            ("t3", "kt3", "std3"),
+            ("t0", "kt0", "resp0"),   # era "std0"
+            ("t1", "kt1", "resp1"),   # era "std1"
+            ("t2", "kt2", "resp2"),   # era "std2"
+            ("t3", "kt3", "resp3"),   # era "std3"
+
         ]
 
         for time_key, name_key, err_key in markers:
@@ -174,26 +160,6 @@ def extract_existing_picks(stream):
                     seen_identifiers.add(pick_id)
     return found_picks
 
-def export_to_csv(picks, filename):
-    """
-    Export the pick list to a CSV file.
-    """
-    with open(filename, "w", newline="") as f:
-        writer = csv.writer(f, delimiter=";")
-        writer.writerow(["Station", "Channel", "Phase", "UTC_Time", "Uncertainty_sec", "Polarity", "Onset"])
-        for p in picks:
-            writer.writerow(
-                [
-                    p["sta"],
-                    p["cha_source"],
-                    p["phase"],
-                    p["abs_t"],
-                    p.get("uncertainty", 0.0),
-                    p.get("polarity", "Unknown"),
-                    p.get("onset", "Unknown"),
-                ]
-            )
-
 def extract_picks_from_csv(filename):
     """
     Extract the pick list from a CSV file.
@@ -216,23 +182,108 @@ def extract_picks_from_csv(filename):
                 picks.append(pk)
     return picks
 
+def extract_picks_from_seisgram_pick(filename):
+    """
+    Extract the pick list from a .pick file created by Seisgram2k.
+    """
+    _ONSET_MAP = {"i": "impulsive", "e": "emergent"}
+    _POLARITY_MAP = {"c": "positive", "u": "positive", "+": "positive",
+        "d": "negative", "-": "negative",}
+    picks = []
+    with open(filename, "r") as f:
+        for line in f:
+            row = line.split()
+            if len(row) < 9:
+                continue
+            t0 = datetime.strptime(row[6] + row[7], "%Y%m%d%H%M")
+            abs_t = t0 + timedelta(seconds=float(row[8]))
+            pk = {
+                "sta": row[0],
+                "cha_source": row[2],
+                "phase": row[4],
+                "abs_t": abs_t.isoformat(timespec="milliseconds"),
+                "uncertainty": float(row[10]) if len(row) > 10 else 0.0,
+                "polarity": _POLARITY_MAP.get(row[5].lower(), "Unknown"),
+                "onset": _ONSET_MAP.get(row[3].lower(), "Unknown"),
+            }
+            picks.append(pk)
+    return picks
+
+def extract_picks_from_quakeml(filename):
+    """
+    Extract picks from a QuakeML file.
+    """
+    cat = read_events(filename)
+    picks = []
+    for event in cat:
+        for pick in event.picks:
+            pk = {
+                "sta": pick.waveform_id.station_code if pick.waveform_id else "",
+                "cha_source": pick.waveform_id.channel_code if pick.waveform_id else "",
+                "phase": pick.phase_hint if pick.phase_hint else "",
+                "abs_t": str(pick.time),
+                "uncertainty": pick.time_errors.uncertainty if pick.time_errors and pick.time_errors.uncertainty else 0.0,
+                "polarity": pick.polarity.capitalize() if pick.polarity else "Unknown",
+                "onset": pick.onset.capitalize() if pick.onset else "Unknown"
+            }
+            picks.append(pk)
+    return picks
+
+def export_to_csv(picks, filename):
+    """
+    Export the pick list to a CSV file.
+    """
+    with open(filename, "w", newline="") as f:
+        writer = csv.writer(f, delimiter=";")
+        writer.writerow(["Station", "Channel", "Phase", "UTC_Time", "Uncertainty_sec", "Polarity", "Onset"])
+        for p in picks:
+            writer.writerow(
+                [
+                    p["sta"],
+                    p["cha_source"],
+                    p["phase"],
+                    p["abs_t"],
+                    p.get("uncertainty", 0.0),
+                    p.get("polarity", "Unknown"),
+                    p.get("onset", "Unknown"),
+                ]
+            )
+
 def save_picks_to_sac(stream, picks):
     """
     Write picks back into the SAC headers of the loaded stream and save files.
+    Clears old picks first so that deleted picks are actually removed from the files.
     """
+    for tr in stream:
+        if not hasattr(tr.stats, "sac"):
+            continue
+        sac = tr.stats.sac
+        for key in ["a", "f"]:    # Pulisci i marker della fase P
+            if key in sac:
+                sac[key] = -12345.0
+        if "ka" in sac:
+            sac["ka"] = "-12345"
+        for i in range(10):    # Pulisci i marker delle fasi S e altre (t0 - t9)
+            t_key = f"t{i}"
+            err_key = f"resp{i}"
+            name_key = f"kt{i}"
+            
+            if t_key in sac: 
+                sac[t_key] = -12345.0
+            if err_key in sac: 
+                sac[err_key] = -12345.0
+            if name_key in sac: 
+                sac[name_key] = "-12345"
     for pk in picks:
         target_traces = stream.select(station=pk["sta"])
         unc = float(pk.get("uncertainty", 0.0))
-
         i = 0
         for tr in target_traces:
             if not hasattr(tr.stats, "sac"):
                 tr.stats.sac = {}
-
             pick_time = UTCDateTime(pk["abs_t"])
             rel_time = pick_time - tr.stats.starttime
             p_name = pk["phase"].upper()
-
             # Mapping logic
             if p_name == "P":
                 tr.stats.sac["a"] = rel_time
@@ -241,20 +292,19 @@ def save_picks_to_sac(stream, picks):
             elif p_name == "S":
                 tr.stats.sac["t0"] = rel_time
                 tr.stats.sac["kt0"] = "S"
-                tr.stats.sac["std0"] = unc
+                tr.stats.sac["resp0"] = unc
             else:
                 i += 1
                 if i <= 9:
                     tr.stats.sac[f"t{i}"] = rel_time
                     tr.stats.sac[f"kt{i}"] = p_name
-                    tr.stats.sac[f"std{i}"] = unc
-
-            # Save to disk
-            if "filename" in tr.stats and tr.stats.filename:
-                try:
-                    tr.write(tr.stats.filename, format="SAC")
-                except Exception as e:
-                    print(f"Error saving SAC file for {tr.id}: {e}")
+                    tr.stats.sac[f"resp{i}"] = unc
+    for tr in stream:
+        if "filename" in tr.stats and tr.stats.filename:
+            try:
+                tr.write(tr.stats.filename, format="SAC")
+            except Exception as e:  # noqa: BLE001
+                print(f"Error saving SAC file for {tr.id}: {e}")
 
 def export_to_quakeml(picks, filename):
     """
@@ -281,32 +331,12 @@ def export_to_quakeml(picks, filename):
     cat.append(event)
     cat.write(filename, format="QUAKEML")
 
-def extract_picks_from_quakeml(filename):
-    """
-    Extract picks from a QuakeML file.
-    """
-    cat = read_events(filename)
-    picks = []
-    for event in cat:
-        for pick in event.picks:
-            pk = {
-                "sta": pick.waveform_id.station_code if pick.waveform_id else "",
-                "cha_source": pick.waveform_id.channel_code if pick.waveform_id else "",
-                "phase": pick.phase_hint if pick.phase_hint else "",
-                "abs_t": str(pick.time),
-                "uncertainty": pick.time_errors.uncertainty if pick.time_errors and pick.time_errors.uncertainty else 0.0,
-                "polarity": pick.polarity.capitalize() if pick.polarity else "Unknown",
-                "onset": pick.onset.capitalize() if pick.onset else "Unknown"
-            }
-            picks.append(pk)
-    return picks
-
 def get_epicentral_distance(tr):
     """Calculate epicentral distance in degrees from SAC headers if available."""
     if not hasattr(tr.stats, "sac"):
         return None
     sac = tr.stats.sac
-    if "evla" in sac and "evlo" in sac and "stla" in sac and "stlo" in sac:
+    if "evla" in sac and "evlo" in sac and "stla" in sac and "stlo" in sac:  # noqa: SIM102
         if sac["evla"] != -12345.0 and sac["evlo"] != -12345.0 and sac["stla"] != -12345.0 and sac["stlo"] != -12345.0:
             return locations2degrees(sac["evla"], sac["evlo"], sac["stla"], sac["stlo"])
     return None
@@ -336,7 +366,7 @@ def reorder_stream_by_arrival(stream, picks):
         if sta not in sta_time or t < sta_time[sta]:
             sta_time[sta] = t
             
-    all_stas = list(set([tr.stats.station for tr in stream]))
+    all_stas = list({tr.stats.station for tr in stream})
     for sta in all_stas:
         if sta not in sta_time:
             sta_time[sta] = UTCDateTime(2100, 1, 1)
@@ -348,11 +378,63 @@ def reorder_stream_by_arrival(stream, picks):
         new_st += stream.select(station=sta)
     return new_st
 
+def reorder_stream_by_name(stream):
+    """Reorder stream by station name."""
+    sta_names = []
+    for tr in stream:
+        sta = tr.stats.station
+        if sta not in sta_names:
+            sta_names.append(sta)
+            
+    sta_names.sort()
+    
+    new_st = stream.__class__()
+    for sta in sta_names:
+        new_st += stream.select(station=sta)
+    return new_st
+
+def remove_pick_from_sac(stream, station, channel, phase_name):
+    "Remove a specific pick from SAC headers of matching traces by setting them to -12345.0"
+    target_traces = stream.select(station=station, channel=channel)
+    if not target_traces:
+        target_traces = stream.select(station=station)
+
+    p_name = phase_name.upper()
+    for tr in target_traces:
+        if not hasattr(tr.stats, "sac"):
+            continue
+        sac = tr.stats.sac
+        if p_name == "P":
+            if sac.get("ka", "").strip().upper() == "P" or "a" in sac:
+                sac["a"] = -12345.0
+                sac["ka"] = "-12345"
+                sac["f"] = -12345.0
+        elif p_name == "S":  # noqa: SIM102
+            if sac.get("kt0", "").strip().upper() == "S" or "t0" in sac:
+                sac["t0"] = -12345.0
+                sac["kt0"] = "-12345"
+                sac["resp0"] = -12345.0
+
+        for i in range(10):
+            name_key = f"kt{i}"
+            t_key = f"t{i}"
+            err_key = f"resp{i}"
+            if sac.get(name_key, "").strip().upper() == p_name:
+                sac[t_key] = -12345.0
+                sac[name_key] = "-12345"
+                sac[err_key] = -12345.0
+
+        if "filename" in tr.stats and tr.stats.filename:
+            try:
+                tr.write(tr.stats.filename, format="SAC")
+            except Exception as e:  # noqa: BLE001
+                print(f"Error updating SAC file after pick deletion: {e}")
+
 def calculate_theoretical_arrivals(stream, model_name="iasp91"):
     """Calculate theoretical P and S arrivals for each station."""
     try:
         model = TauPyModel(model=model_name)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         print(f"Error loading velocity model {model_name}: {e}")
         return {}
         
@@ -361,10 +443,10 @@ def calculate_theoretical_arrivals(stream, model_name="iasp91"):
         sta = tr.stats.station
         if sta in arrivals:
             continue
-            
+
         if not hasattr(tr.stats, "sac"):
             continue
-            
+
         sac = tr.stats.sac
         if all(k in sac and sac[k] != -12345.0 for k in ["evla", "evlo", "stla", "stlo", "evdp"]):
             dist_deg = locations2degrees(sac["evla"], sac["evlo"], sac["stla"], sac["stlo"])
@@ -385,7 +467,32 @@ def calculate_theoretical_arrivals(stream, model_name="iasp91"):
                             sta_arrs[ph.upper()] = origin_time + a.time
                     
                     arrivals[sta] = sta_arrs
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 print(f"Error calculating travel times for {sta}: {e}")
                 
     return arrivals
+
+def normalize_traces(stream):
+    "Normalize stream traces."
+
+    from collections import defaultdict
+    
+    new_stream = stream.copy()
+    station_max = defaultdict(float)
+
+    for tr in new_stream:
+        station = tr.stats.station
+        d = tr.data[np.isfinite(tr.data)]
+        if d.size > 0:
+            trace_max = np.max(np.abs(d))
+            station_max[station] = max(station_max[station], trace_max)
+    
+    for tr in new_stream:
+        station = tr.stats.station
+        data_max = station_max.get(station, 1.0)
+        if data_max == 0:
+            data_max = 1.0
+        if len(tr.data) > 0:
+            tr.data = tr.data.astype(np.float64) / data_max
+    
+    return new_stream

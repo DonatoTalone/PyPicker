@@ -4,8 +4,11 @@ authors:
   - family-names: Talone
     given-names: Donato
     orcid: https://orcid.org/0009-0004-3472-1022
+  - family-names: Lelj
+    given-names: Giorgia
+    orcid: https://orcid.org/0009-0007-3212-9799
 title: "PyPicker - Seismic Waveform Picker"
-version: 1.0.0
+version: 2.0.0
 identifiers:
   - type: doi
     value: 

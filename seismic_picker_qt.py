@@ -19,7 +19,6 @@ from obspy import Stream, UTCDateTime, read
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QKeySequence, QPalette, QShortcut
 from PyQt6.QtWidgets import (
-    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -334,7 +333,6 @@ class SeismicPickerQT(QMainWindow):
             ["Sta", "Cha", "Phase", "Date", "Time", "Unc (s)", "Polarity", "Onset", "Action"]
         )
         self.table.setSortingEnabled(True)
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.EditKeyPressed)
         self.table.horizontalHeader().setSectionResizeMode(  # ty: ignore[unresolved-attribute]
             QHeaderView.ResizeMode.Stretch
         )
@@ -986,7 +984,6 @@ class SeismicPickerQT(QMainWindow):
         text.setPos(x_pos, 0)
 
     def update_table(self):
-        # Blocchiamo i segnali per evitare loop infiniti mentre popoliamo la tabella
         self.table.blockSignals(True) 
         self.table.setSortingEnabled(False)
         
@@ -998,7 +995,7 @@ class SeismicPickerQT(QMainWindow):
                 QTableWidgetItem(pk["phase"]),
                 QTableWidgetItem(pk["abs_t"].split('T')[0]),
                 QTableWidgetItem(pk["abs_t"].split("T")[-1][:-1]),
-                QTableWidgetItem(str(pk.get("uncertainty", 0.0))), # Colonna 5: Incertezza
+                QTableWidgetItem(str(pk.get("uncertainty", 0.0))),
                 QTableWidgetItem(pk.get("polarity", "Unknown")),
                 QTableWidgetItem(pk.get("onset", "Unknown"))
             ]
@@ -1016,7 +1013,6 @@ class SeismicPickerQT(QMainWindow):
             btn.clicked.connect(lambda _, idx=i: self.delete_pick(idx))
             self.table.setCellWidget(i, 8, btn)
             
-        # Riattiviamo i segnali
         self.table.blockSignals(False)
         self.table.setSortingEnabled(True)
 
@@ -1049,7 +1045,7 @@ class SeismicPickerQT(QMainWindow):
                 pk["sta"] = new_text
             elif col == 1:    # Colonna 1: Canale (Cha)
                 pk["cha_source"] = new_text
-            elif col == 2:    # Colonna 2: Fase (Phase)
+            if col == 2:    # Colonna 2: Fase (Phase)
                 pk["phase"] = new_text
             elif col == 3 or col == 4:    # Colonna 3 (Data) o Colonna 4 (Ora)
                 current_abs = pk["abs_t"]
@@ -1095,6 +1091,8 @@ class SeismicPickerQT(QMainWindow):
 
     def on_table_row_double_clicked(self, row, _col):
         """Show the waveform for the pick in the selected row."""
+        if _col not in (0, 1):
+            return
         idx = self._pick_index_from_row(row)
         if idx is None:
             return
@@ -1118,13 +1116,6 @@ class SeismicPickerQT(QMainWindow):
         for w in widgets:
             w.blockSignals(False)
         self.update_plots(reset_zoom=True)
-
-        if self.plots:
-            t = UTCDateTime(pk["abs_t"]) - self.plots[0].meta["st"]
-            x0, x1 = self.plots[0].viewRange()[0]
-            if x0 <= t <= x1:
-                half = (x1 - x0) * 0.05
-                self.plots[0].setXRange(max(x0, t - half), min(x1, t + half), padding=0)
 
     def reset_view(self):
         self.update_plots(reset_zoom=True)

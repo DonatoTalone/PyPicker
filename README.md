@@ -54,7 +54,7 @@ For the latest development features, run the `dev` branch from source or build i
 
 ### Run the development branch from source
 
-The release workflow uses Python 3.11. Use a virtual environment and install the pinned dependencies in `requirements.txt`.
+The release workflow uses Python 3.11, but the code is tested using Python 3.12 on Arch Linux OS. Use a virtual environment and install the pinned dependencies in `requirements.txt`.
 
 ```bash
 git clone --branch dev https://github.com/DonatoTalone/PyPicker.git
@@ -113,12 +113,6 @@ The configuration includes:
 - `defaults.picking_mode`: `Popup` or `Sidebar`.
 - `defaults.scalogram_duration`: initial Morlet duration factor; optional, with a fallback of `1.0`.
 
-Current limitations:
-
-- The initial theme is System. A JSON theme preference is not currently implemented, and changing the theme in the GUI does not save a preference.
-- The GUI currently initializes the filter to None and the frequency controls to 1.0 and 20.0 Hz. Although `low_f`, `high_f`, and `filter_type` are present in the distributed JSON, they do not currently initialize those controls.
-- Invalid or unreadable configuration files produce a startup error rather than silently reverting to defaults. Back up the user file before editing it. To reset preferences, close PyPicker and rename or remove the user `config.json`; it will be recreated at the next launch.
-
 ## Usage
 
 ### Load and navigate waveforms
@@ -134,7 +128,7 @@ Select Focus Mode to inspect the current station with linked time axes across th
 
 1. Raw waveform.
 2. Processed waveform, labeled Filtered.
-3. Morlet scalogram calculated from the raw waveform, with logarithmically spaced frequencies from 1 to 30 Hz and power expressed in dB.
+3. Morlet scalogram calculated from the raw waveform, with logarithmically spaced frequencies from 1 to 30 Hz.
 
 Entering Focus Mode selects the band-pass filter. Adjust the frequency controls and processing checkboxes as needed. The scalogram continues to use the raw trace, not the filtered waveform.
 
@@ -211,7 +205,7 @@ LICENSE                   License text
 
 Use the DOI badge above or the repository's `CITATION.cff` for citation information.
 
-Development attribution retained from the original README: It is partially written by Gemini 3.6 Flash (High) Antigravity.
+The code is developed with the help of the following AI models: Gemini 3.6 Flash (High) Antigravity, GPT6.1 Sol (Reasoning), Claude Sonnet 5.5 (Extra).
 
 ## License
 

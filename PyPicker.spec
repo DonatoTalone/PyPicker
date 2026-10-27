@@ -10,17 +10,15 @@ binaries = []
 hiddenimports = []
 
 for pkg in ['obspy', 'matplotlib', 'pyqtgraph', 'scipy']:
-    try:
-        d, b, h = collect_all(pkg)
-        datas += d
-        binaries += b
-        hiddenimports += h
-    except Exception:
-        pass
+    d, b, h = collect_all(pkg)
+    datas += d
+    binaries += b
+    hiddenimports += h
 
 # Collect distribution metadata for dependencies so pkg_resources/importlib.metadata can find them
+datas += copy_metadata("obspy", recursive=True)
 pkgs_metadata = [
-    'obspy', 'decorator', 'greenlet', 'requests', 'urllib3', 'certifi',
+    'decorator', 'greenlet', 'requests', 'urllib3', 'certifi',
     'charset_normalizer', 'colorama', 'idna', 'lxml', 'numpy', 'scipy',
     'matplotlib', 'setuptools', 'packaging', 'pyqtgraph', 'pytz',
     'contourpy', 'cycler', 'fonttools', 'kiwisolver', 'pillow',

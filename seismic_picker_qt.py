@@ -1,3 +1,4 @@
+import logging
 import sys
 
 # Prevent ObsPy from attempting to run git describe on host repo in frozen PyInstaller builds
@@ -13,11 +14,13 @@ if getattr(sys, "frozen", False):
             return _orig_check_output(cmd, *args, **kwargs)  # ty: ignore[call-non-callable]
         subprocess.check_output = _safe_check_output  # ty: ignore[invalid-assignment]
 
+logger = logging.getLogger(__name__)
+
 import numpy as np
 import pyqtgraph as pg
 from obspy import Stream, UTCDateTime, read
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont, QKeySequence, QPalette, QShortcut
+from PyQt6.QtCore import QRectF, Qt, QTimer, QUrl
+from PyQt6.QtGui import QDesktopServices, QFont, QKeySequence, QPalette, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -109,6 +112,7 @@ class SeismicPickerQT(QMainWindow):
         self.picks = []
         self.plots = []
         self.stations = []
+        self._scalo_cache = {}
 
         # Picking state
         self.active_pick_items = None  # The visual LinearRegionItem
@@ -151,7 +155,7 @@ class SeismicPickerQT(QMainWindow):
         left_sidebar.addWidget(QLabel("<b>View Mode:</b>"))
 
         self.view_mode = QComboBox()
-        self.view_mode.addItems(["Single Station", "All Stations"])
+        self.view_mode.addItems(["Single Station", "All Stations", "Focus Mode"])
         left_sidebar.addWidget(self.view_mode)
 
         # Station selection controls
@@ -191,6 +195,16 @@ class SeismicPickerQT(QMainWindow):
         self.spec_scale = QComboBox()
         self.spec_scale.addItems(["Lin-Lin", "Log-Lin", "Lin-Log", "Log-Log"])
         left_sidebar.addWidget(self.spec_scale)
+
+        left_sidebar.addWidget(QLabel("<b>Scalogram duration:</b>"))
+        self.scalo_duration = QDoubleSpinBox()
+        self.scalo_duration.setRange(0.1, 10.0)
+        self.scalo_duration.setDecimals(1)
+        self.scalo_duration.setSingleStep(0.1)
+        self.scalo_duration.setValue(self.config.get("defaults", {}).get("scalogram_duration", 1.0))
+        self.scalo_duration.setKeyboardTracking(False)
+        self.scalo_duration.setEnabled(False)
+        left_sidebar.addWidget(self.scalo_duration)
 
         left_sidebar.addWidget(QLabel("<b>Color Mode:</b>"))
         self.color_mode = QComboBox()
@@ -300,11 +314,18 @@ class SeismicPickerQT(QMainWindow):
         self.show_theo = QCheckBox("Show Arrivals")
         default_theo = self.config.get("defaults", {}).get("show_theoretical_arrivals", False)
         self.show_theo.setChecked(default_theo)
-        self.show_theo.setStyleSheet("font-weight: bold; color: #d35400;") # highlight
         right_sidebar.addWidget(self.show_theo)
 
         right_sidebar.addStretch()
 
+        # Configuration button
+        self.btn_open_config = QPushButton("Open Configuration")
+        self.btn_open_config.clicked.connect(self.open_config_folder)
+        self.btn_open_config.setStyleSheet(
+            "font-weight: bold; background-color: #3498db; color: white;"
+        )
+
+        right_sidebar.addWidget(self.btn_open_config)
         # Shortcuts reminder card
         sc_group = QGroupBox("Shortcuts")
         sc_layout = QVBoxLayout()
@@ -349,9 +370,21 @@ class SeismicPickerQT(QMainWindow):
         # Signal connections
         self._connect_signals()
 
+    def open_config_folder(self):
+        folder = utils.get_config_dir()
+
+        if not QDesktopServices.openUrl(
+            QUrl.fromLocalFile(str(folder))
+        ):
+            QMessageBox.warning(
+                self,
+                "Configuration Folder",
+                f"Open the configuration folder:\n{folder}",
+            )
+
     def _connect_signals(self):
         """Register events and UI updates."""
-        self.view_mode.currentIndexChanged.connect(lambda: self.update_plots(reset_zoom=True))
+        self.view_mode.currentIndexChanged.connect(self._on_view_mode_changed)
         self.sta_sel.currentIndexChanged.connect(lambda: self.update_plots(reset_zoom=True))
         self.view_wave.toggled.connect(lambda: self.update_plots(reset_zoom=True))
         self.spec_scale.currentIndexChanged.connect(self.update_plots)
@@ -369,6 +402,29 @@ class SeismicPickerQT(QMainWindow):
         self.win.scene().sigMouseClicked.connect(self.on_mouse_click_release)  # ty: ignore[unresolved-attribute]
         self.table.cellChanged.connect(self.on_table_cell_changed)
         self.table.cellDoubleClicked.connect(self.on_table_row_double_clicked)
+
+        self._scalo_timer = QTimer(self)
+        self._scalo_timer.setSingleShot(True)
+        self._scalo_timer.setInterval(300)
+        self._scalo_timer.timeout.connect(self.update_plots)
+        self.scalo_duration.valueChanged.connect(lambda _: self._scalo_timer.start())
+
+    def _on_view_mode_changed(self):
+        self._sync_view_widgets()
+        if self.view_mode.currentText() == "Focus Mode":
+            idx = self.filt_sel.findText("BandPass", Qt.MatchFlag.MatchStartsWith)
+            if idx >= 0 and self.filt_sel.currentIndex() != idx:
+                self.filt_sel.blockSignals(True)  # a single redraw, below
+                self.filt_sel.setCurrentIndex(idx)
+                self.filt_sel.blockSignals(False)
+        self.update_plots(reset_zoom=True)
+
+    def _sync_view_widgets(self):
+        """Enable only the controls used by the current view mode."""
+        detail = self.view_mode.currentText() == "Focus Mode"
+        self.scalo_duration.setEnabled(detail)
+        for w in (self.view_wave, self.view_spec, self.spec_scale):
+            w.setEnabled(not detail)  # not used in Focus Mode
 
     def setup_shortcuts(self):
         """Map keyboard shortcuts based on config.json."""
@@ -529,7 +585,7 @@ class SeismicPickerQT(QMainWindow):
         return None
 
     def open_files(self):
-        """Load seismic data from disk."""
+        "Load seismic data from disk"
         files, _ = QFileDialog.getOpenFileNames(
             self,
             "Select Waveforms",
@@ -609,7 +665,7 @@ class SeismicPickerQT(QMainWindow):
             self.update_plots(reset_zoom=True)
 
     def _setup_after_load(self, target_idx=0):
-        """Populate the station list after data loading."""
+        "Populate the station list after data loading"
         seen = set()
         self.sta_sel.blockSignals(True)
         self.sta_sel.clear()
@@ -663,7 +719,7 @@ class SeismicPickerQT(QMainWindow):
             self._setup_after_load(target_idx=idx)
 
     def rotate_phase(self):
-        """Cycle between P-S phases"""
+        "Cycle between P-S phases"
         if self.ph_sel.currentText() == "S":
             self.ph_sel.setCurrentText("P")
         elif self.ph_sel.currentText() == "P":
@@ -672,7 +728,7 @@ class SeismicPickerQT(QMainWindow):
             self.ph_sel.setCurrentText("P")
 
     def update_plots(self, *args, reset_zoom=False):
-        """Redraw all plots based on current filters and view mode."""
+        "Redraw all plots based on current filters and view mode"
         old_view_range = None
         if not reset_zoom and self.plots and self.view_wave.isChecked() and hasattr(self.plots[0], 'viewRange'):
             old_view_range = self.plots[0].viewRange()
@@ -680,6 +736,8 @@ class SeismicPickerQT(QMainWindow):
         self.win.clear()  # ty: ignore[unresolved-attribute]
         self.plots = []
         if not self.original_stream or not self.stations:
+            self.win.clear()  # ty: ignore[unresolved-attribute]
+            self.plots = []
             self.sta_count_label.setText("0/0")
             return
 
@@ -692,7 +750,23 @@ class SeismicPickerQT(QMainWindow):
             "high_f": self.f_high.value(),
         }
 
-        proc_st = utils.apply_preprocessing(self.original_stream, params)
+        if self.view_mode.currentText() == "Focus Mode":
+            self._plot_detail(params, old_view_range)
+            return
+
+        try:
+            proc_st = utils.apply_preprocessing(self.original_stream, params)
+        except Exception as exc:
+            logger.exception("Error in pre-processing signals")
+            QMessageBox.critical(
+                self,
+                "Error in pre-processing signals",
+                f"{type(exc).__name__}: {exc}",
+            )
+            return
+
+        self.win.clear()  # ty: ignore[unresolved-attribute]
+        self.plots = []
         
         model_name = self.config.get("defaults", {}).get("velocity_model", "")
         theo_arrs = {}
@@ -714,7 +788,6 @@ class SeismicPickerQT(QMainWindow):
         self.win.setMinimumHeight(max(total_h, 400))
         first_p = None
         current_row = 0
-        colors_cfg = self.config.get("colors", {})
 
         for station in target_sta:
             traces = sorted(
@@ -738,64 +811,13 @@ class SeismicPickerQT(QMainWindow):
                     p.setXLink(first_p)
 
                 # Color logic
-                chan = tr.stats.channel.upper()
-                if self.color_mode.currentIndex() == 0:
-                    color = colors_cfg.get(chan[-1], colors_cfg.get("other", "gray"))
-                    if chan[-1] == "N" and self._is_light_bg(getattr(self, "current_bg", "#1e1e1e")):
-                        color = "#b7950b"
-                else:
-                    color = self.fg_color
+                color = self._trace_color(tr.stats.channel)
 
                 if self.view_wave.isChecked():
-                    dur = tr.stats.npts * tr.stats.delta
-                    data_max = np.max(np.abs(tr.data)) if len(tr.data) > 0 else 1
-                    if not np.isfinite(data_max) or data_max <= 0:
-                        data_max = 1.0
-                    p.setLimits(
-                        xMin=0,
-                        xMax=dur,
-                        yMin=-data_max * 10,
-                        yMax=data_max * 10,
+                    self._plot_waveform(
+                        p, tr, color, theo_arrs, old_view_range,
+                        normalized=self.normalize.isChecked(),
                     )
-                    if old_view_range is not None:
-                        p.setXRange(old_view_range[0][0], old_view_range[0][1], padding=0)
-                    else:
-                        p.setXRange(0, dur, padding=0)
-                    if self.normalize.isChecked():
-                        p.setYRange(-1, 1)
-                    else:
-                        p.setYRange(-data_max, data_max)
-                    p.plot(tr.times(), tr.data, pen=pg.mkPen(color, width=1.2))
-                    p.meta = {
-                        "sta": tr.stats.station,
-                        "cha": tr.stats.channel,
-                        "st": tr.stats.starttime,
-                    }
-
-                    # Draw existing picks
-                    for pk in self.picks:
-                        if pk["sta"] == tr.stats.station:
-                            t_rel = UTCDateTime(pk["abs_t"]) - tr.stats.starttime
-                            if 0 <= t_rel <= dur:
-                                self._add_visual_pick(
-                                    p, t_rel, pk["phase"], pk.get("uncertainty", 0.0)
-                                )
-                                
-                    # Draw theoretical arrivals
-                    if tr.stats.station in theo_arrs:
-                        for ph, arr_time in theo_arrs[tr.stats.station].items():
-                            t_rel = arr_time - tr.stats.starttime
-                            if 0 <= t_rel <= dur:
-                                ph_u = ph.upper()
-                                if ph_u == "P":
-                                    t_col = "#e74c3c" # Red
-                                elif ph_u == "S":
-                                    t_col = "#2980b9" # Blue
-                                else:
-                                    t_col = "#1abc9c" # Teal
-                                self._add_visual_pick(
-                                    p, t_rel, f"{ph} (theo)", 0.0, color=t_col, style=Qt.PenStyle.DotLine
-                                )
                 else:
                     # Spectrum view
                     f, s = utils.get_spectrum(tr)
@@ -850,6 +872,199 @@ class SeismicPickerQT(QMainWindow):
                 label.setPos(p.vb.boundingRect().width() - 20, 0)
 
                 self.plots.append(p)
+
+    def _trace_color(self, chan):
+        "Colour of a channel according to the Color Mode combo"
+        chan = chan.upper()
+        if self.color_mode.currentIndex() == 0:
+            colors_cfg = self.config.get("colors", {})
+            color = colors_cfg.get(chan[-1], colors_cfg.get("other", "gray"))
+            if chan[-1] == "N" and self._is_light_bg(getattr(self, "current_bg", "#1e1e1e")):
+                color = "#b7950b"
+            return color
+        return self.fg_color
+
+    def _plot_waveform(self, p, tr, color, theo_arrs, old_view_range=None, normalized=False):
+        "Time-domain trace on plot `p`, with its picks"
+        dur = tr.stats.npts * tr.stats.delta
+        data_max = float(np.max(np.abs(tr.data))) if len(tr.data) > 0 else 1.0
+        if not np.isfinite(data_max) or data_max <= 0:
+            data_max = 1.0
+        p.setLimits(
+            xMin=0,
+            xMax=dur,
+            yMin=-data_max * 10,
+            yMax=data_max * 10,
+        )
+        if old_view_range is not None:
+            p.setXRange(old_view_range[0][0], old_view_range[0][1], padding=0)
+        else:
+            p.setXRange(0, dur, padding=0)
+        if normalized:
+            p.setYRange(-1, 1)
+        else:
+            p.setYRange(-data_max, data_max)
+        p.plot(tr.times(), tr.data, pen=pg.mkPen(color, width=1.2))
+        p.meta = {
+            "sta": tr.stats.station,
+            "cha": tr.stats.channel,
+            "st": tr.stats.starttime,
+        }
+        self._draw_picks(p, tr, theo_arrs)
+
+    def _draw_picks(self, p, tr, theo_arrs):
+        "Existing picks and theoretical arrivals of `tr` on plot `p`"
+        dur = tr.stats.npts * tr.stats.delta
+
+        # Draw existing picks
+        for pk in self.picks:
+            if pk["sta"] == tr.stats.station:
+                t_rel = UTCDateTime(pk["abs_t"]) - tr.stats.starttime
+                if 0 <= t_rel <= dur:
+                    self._add_visual_pick(
+                        p, t_rel, pk["phase"], pk.get("uncertainty", 0.0)
+                    )
+
+        # Draw theoretical arrivals
+        if tr.stats.station in theo_arrs:
+            for ph, arr_time in theo_arrs[tr.stats.station].items():
+                t_rel = arr_time - tr.stats.starttime
+                if 0 <= t_rel <= dur:
+                    ph_u = ph.upper()
+                    if ph_u == "P":
+                        t_col = "#e74c3c" # Red
+                    elif ph_u == "S":
+                        t_col = "#2980b9" # Blue
+                    else:
+                        t_col = "#1abc9c" # Teal
+                    self._add_visual_pick(
+                        p, t_rel, f"{ph} (theo)", 0.0, color=t_col, style=Qt.PenStyle.DotLine
+                    )
+
+    def _detail_blocks(self, raw_st, proc_st):
+        """One (raw, processed) pair per source file: the first component of each file.
+
+        One file per component -> every file gives a block.
+        One file per station   -> a single block, for the first component (Z before N, E).
+        """
+        by_file = {}
+        for raw, proc in zip(raw_st, proc_st):
+            key = raw.stats.get("filename") or raw.id  # no filename: one trace = one block
+            by_file.setdefault(key, []).append((raw, proc))
+        firsts = [
+            max(pairs, key=lambda rp: rp[0].stats.channel[-1])
+            for pairs in by_file.values()
+        ]
+        return sorted(firsts, key=lambda rp: rp[0].stats.channel[-1], reverse=True)
+
+    def _plot_detail(self, params, old_view_range=None):
+        """Focus Mode panels for the current station, one block per file."""
+        sta_idx = self.sta_sel.currentIndex()
+        if sta_idx < 0:
+            return
+        sta = self.stations[sta_idx]["sta"]
+        self.sta_count_label.setText(f"{sta_idx + 1}/{self.sta_sel.count()}")
+
+        # The whole station is preprocessed, so normalisation is shared between its
+        # components as in the other modes. select() keeps the order, hence the zip.
+        raw_st = self.original_stream.select(station=sta)
+        proc_st = utils.apply_preprocessing(raw_st, params)
+        blocks = self._detail_blocks(raw_st, proc_st)
+        if not blocks:
+            return
+
+        theo_arrs = {}
+        model_name = self.config.get("defaults", {}).get("velocity_model", "")
+        if model_name and self.show_theo.isChecked():
+            theo_arrs = utils.calculate_theoretical_arrivals(proc_st, model_name=model_name)
+
+        self.win.setMinimumHeight(max(len(blocks) * (3 * 150 + 40), 400))
+        duration = self.scalo_duration.value()
+        first_p = None
+        row = 0
+        for raw, proc in blocks:
+            cha = raw.stats.channel
+            color = self._trace_color(cha)
+            self.win.addItem(
+                pg.LabelItem(f"<b>STATION: {sta} - {cha}</b>", size="12pt", color=self.fg_color),
+                row=row,  # ty: ignore[unknown-argument]
+                col=0,  # ty: ignore[unknown-argument]
+            )
+            p_raw = self.win.addPlot(row=row + 1, col=0)  # ty: ignore[unresolved-attribute]
+            p_filt = self.win.addPlot(row=row + 2, col=0)  # ty: ignore[unresolved-attribute]
+            p_scalo = self.win.addPlot(row=row + 3, col=0)  # ty: ignore[unresolved-attribute]
+            row += 4
+            for p in (p_raw, p_filt, p_scalo):
+                p.getAxis("left").setWidth(60)  # same width: linked X axes stay aligned
+
+            if first_p is None:
+                first_p = p_raw
+            else:
+                p_raw.setXLink(first_p)
+            p_filt.setXLink(first_p)
+            p_scalo.setXLink(first_p)
+
+            self._plot_waveform(p_raw, raw, color, theo_arrs, old_view_range, normalized=False)
+            self._plot_waveform(
+                p_filt, proc, color, theo_arrs, old_view_range, normalized=params["normalize"]
+            )
+            p_scalo.meta = p_raw.meta  # needed by _start_picking when clicking on the scalogram
+            self._plot_scalogram(p_scalo, raw, duration, old_view_range, theo_arrs)
+
+            p_raw.setLabel("left", "Raw")
+            p_filt.setLabel("left", "Filtered")
+            p_scalo.setLabel("bottom", "Time (s)")
+            self.plots.extend([p_raw, p_filt, p_scalo])  # plots[0] is always a raw panel
+
+        # Linked X axes sync through the on-screen geometry of the panels: compute the layout
+        # first and re-apply the range, otherwise the view can start a few seconds later
+        self.win.ci.layout.activate()  # ty: ignore[unresolved-attribute]
+        if old_view_range is not None:
+            first_p.setXRange(old_view_range[0][0], old_view_range[0][1], padding=0)  # ty: ignore[unresolved-attribute]
+        else:
+            first_p.setXRange(0, blocks[0][0].stats.npts * blocks[0][0].stats.delta, padding=0)  # ty: ignore[unresolved-attribute]
+
+    def _plot_scalogram(self, p, tr, duration, old_view_range, theo_arrs):
+        "Scalogram of the raw trace."
+        if tr.stats.npts < 2:
+            return
+        key = (self._trace_key(tr), round(duration, 3))
+        if key not in self._scalo_cache:
+            if len(self._scalo_cache) >= 12:
+                self._scalo_cache.pop(next(iter(self._scalo_cache)))
+            self._scalo_cache[key] = utils.Morlet_scalogram(tr.data, tr.stats.delta, duration)
+        if self._scalo_cache[key] is None:  # flat or non-finite trace
+            return
+        db, freqs, width, levels = self._scalo_cache[key]
+
+        # Rows are evenly spaced in log10(f): the Y axis is log10(f) with ticks in Hz
+        dur = tr.stats.npts * tr.stats.delta
+        y = np.log10(freqs)
+        dy = (y[-1] - y[0]) / (len(y) - 1)
+
+        img = pg.ImageItem()
+        img.setImage(db.T, autoLevels=False)  # (n_time, n_freq): x = time, y = frequency
+        img.setLevels(levels)
+        img.setLookupTable(utils.jet_colormap())
+        img.setRect(QRectF(0, y[0] - dy / 2, width, (y[-1] - y[0]) + dy))
+        p.addItem(img)
+
+        # Frequencies of interest: tick labels and thin horizontal guide lines
+        ticks = [f for f in (1, 2, 5, 10, 20, 30) if freqs[0] <= f <= freqs[-1]]
+        for f in ticks:
+            p.addItem(pg.InfiniteLine(pos=np.log10(f), angle=0, pen=pg.mkPen((0, 0, 0, 77))))
+        p.getAxis("left").setTicks([[(np.log10(f), f"{f:g}") for f in ticks]])
+        p.setLabel("left", "Wavelet frequency (Hz)")
+
+        # The view starts exactly at the lowest frequency (1 Hz)
+        p.setLimits(xMin=0, xMax=dur, yMin=y[0], yMax=y[-1] + dy / 2)
+        p.setYRange(y[0], y[-1] + dy / 2, padding=0)
+        if old_view_range is not None:
+            p.setXRange(old_view_range[0][0], old_view_range[0][1], padding=0)
+        else:
+            p.setXRange(0, dur, padding=0)
+
+        self._draw_picks(p, tr, theo_arrs)  # picks are shown on the scalogram too
 
     def _start_picking(self, scene_pos):
         target_p = None
@@ -1107,14 +1322,18 @@ class SeismicPickerQT(QMainWindow):
             )
             return
 
+        detail = self.view_mode.currentText() == "Focus Mode"
         widgets = (self.view_mode, self.sta_sel, self.view_wave)
         for w in widgets:
             w.blockSignals(True)
+        if not detail:
+            self.view_mode.setCurrentText("Single Station")
+            self.view_wave.setChecked(True)
         self.view_mode.setCurrentText("Single Station")
         self.sta_sel.setCurrentIndex(sta_idx)
-        self.view_wave.setChecked(True)
         for w in widgets:
             w.blockSignals(False)
+        self._sync_view_widgets()
         self.update_plots(reset_zoom=True)
 
     def reset_view(self):
@@ -1189,6 +1408,16 @@ class SeismicPickerQT(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = SeismicPickerQT()
+    app.setApplicationName("PyPicker")
+    try:
+        window = SeismicPickerQT()
+    except RuntimeError as exc:
+        QMessageBox.critical(
+            None,
+            "Configuration Error",
+            str(exc),
+        )
+        sys.exit(1)
+
     window.show()
     sys.exit(app.exec())

@@ -1,46 +1,95 @@
 import csv
 import json
-import os
+from copy import deepcopy
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import numpy as np
 from obspy import Catalog, UTCDateTime, read_events
 from obspy.core.event import Event, Pick, WaveformStreamID
 from obspy.geodetics import locations2degrees
 from obspy.taup import TauPyModel
+from PyQt6.QtCore import QStandardPaths
 
+APP_CONFIG_FOLDER = "PyPicker"
+
+def get_config_dir():
+    "Return default configuration directory for PyPicker."
+    base = QStandardPaths.writableLocation(
+        QStandardPaths.StandardLocation.GenericConfigLocation
+    )
+
+    if not base:
+        raise RuntimeError(
+            "Impossible to define the configuration directory."
+        )
+
+    return Path(base) / APP_CONFIG_FOLDER
+
+def get_config_path():
+    """Return the path to the editable config.json file."""
+    return get_config_dir() / "config.json"
+
+def read_config(path):
+    """Read a JSON file and verify that it contains an object."""
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            config = json.load(handle)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(
+            f"Impossible to read the configuration:\n{path}\n\n{exc}"
+        ) from exc
+
+    if not isinstance(config, dict):
+        raise RuntimeError(  # noqa: TRY004
+            f"The configuration must contain a JSON object:\n{path}"
+        )
+
+    return config
+
+def merge_config(defaults, overrides):
+    "Merge user configs to the defaults"
+    result = deepcopy(defaults)
+
+    for key, value in overrides.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = merge_config(result[key], value)
+        else:
+            result[key] = deepcopy(value)
+
+    return result
 
 def load_config(filename="config.json"):
     """
     Load configuration from a JSON file.
     Returns a default dictionary if the file is missing or corrupted.
     """
-    default_config = {
-        "shortcuts": {
-            "next_station": "D",
-            "prev_station": "A",
-            "phase_p": "P",
-            "phase_s": "S",
-            "reset_view": "R",
-        },
-        "colors": {
-            "Z": "#e74c3c",
-            "N": "#f1c40f",
-            "E": "#3498db",
-            "other": "gray",
-            "pick_line": "#8e44ad",
-            "pick_area_alpha": 50,
-        },
-        "defaults": {"low_f": 1.0, "high_f": 20.0},
-    }
 
-    if os.path.exists(filename):
+    default_path = Path(__file__).resolve().parent / "config.json"
+    defaults = read_config(default_path)
+    user_path = get_config_path()
+
+    try:
+        user_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with open(filename, "r") as f:
-                return json.load(f)
-        except Exception as e:  # noqa: BLE001
-            print(f"Error loading config: {e}")
-    return default_config
+            with user_path.open("x", encoding="utf-8") as handle:
+                json.dump(
+                    defaults,
+                    handle,
+                    indent=4,
+                    ensure_ascii=False,
+                )
+                handle.write("\n")
+        except FileExistsError:
+            pass
+    except OSError as exc:
+        raise RuntimeError(
+            "Impossible to create the user configuration:\n"
+            f"{user_path}\n\n{exc}"
+        ) from exc
+
+    user_config = read_config(user_path)
+    return merge_config(defaults, user_config)
 
 def apply_preprocessing(stream, params):
     """
@@ -496,3 +545,52 @@ def normalize_traces(stream):
             tr.data = tr.data.astype(np.float64) / data_max
     
     return new_stream
+
+def jet_colormap(n=256):
+    "Matplotlib 'jet' colormap as an (n, 3) uint8 lookup table for pyqtgraph."
+
+    x = np.linspace(0, 1, n)
+    red = np.interp(x, [0, 0.35, 0.66, 0.89, 1], [0, 0, 1, 1, 0.5])
+    green = np.interp(x, [0, 0.125, 0.375, 0.64, 0.91, 1], [0, 0, 1, 1, 0, 0])
+    blue = np.interp(x, [0, 0.11, 0.34, 0.65, 1], [0.5, 1, 1, 0, 0])
+    return np.round(np.column_stack([red, green, blue]) * 255).astype(np.uint8)
+
+def Morlet_scalogram(data, dt, duration, f_range=(1.0, 30.0), n_freqs=100,
+                        max_cols=4000, db_range=100.0, percentiles=(1, 99)):
+    """
+    Compute the Morlet scalogram of the given data.
+    
+    Parameters:
+    - data: 1D array of the signal (not modified)
+    - dt: Sampling interval (time step), in seconds
+    - duration: Duration factor for the Morlet wavelet
+    - f_range: (f_min, f_max) in Hz, sampled log-spaced
+    - n_freqs: Number of frequencies
+    - max_cols: Maximum number of time columns of the output
+    - db_range: Dynamic range in dB below the maximum power (floor of the dB image)
+    - percentiles: Percentiles of the dB image used as colour limits
+    
+    Returns:
+    - (db, freqs, width, levels), or None if the trace is flat or not finite, where
+        db is the (n_freq, n_time) power in dB, freqs the frequencies in Hz (evenly spaced
+        in log10), width the time covered by the columns of db in seconds and levels the
+        (low, high) dB colour limits
+    """
+    if duration <= 0:
+        raise ValueError("Duration must be greater than zero.")
+    
+    data = np.asarray(data, dtype=np.float64)
+    freqs = np.geomspace(f_range[0], f_range[1], n_freqs)
+    t_wavelet = np.arange(-2, 2, dt)
+    power = np.empty((n_freqs, len(data)))
+    for i, f in enumerate(freqs):
+        wavelet = np.exp(1j * 2 * np.pi * f * t_wavelet) * np.exp(-(t_wavelet * f / duration) ** 2)
+        power[i] = np.array(np.abs(np.convolve(data, wavelet, mode='same'))) ** 2
+    _, n = power.shape
+    pmax = power.max()
+    if not np.isfinite(pmax) or pmax <= 0:
+        return None
+
+    db = 10 * np.log10(np.maximum(power, pmax * 10 ** (-db_range / 10)))
+    levels = tuple(np.percentile(db, percentiles))
+    return db, freqs, n * dt, levels

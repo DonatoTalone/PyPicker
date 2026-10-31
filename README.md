@@ -1,118 +1,144 @@
-# PyPicker - Seismic Waveform Picker
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="doc/icon/PyPicker_logo_dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="doc/icon/PyPicker_logo_white.png">
+    <img src="doc/icon/PyPicker_logo_dark.png" alt="PyPicker Logo" width="300">
+  </picture>
+</p>
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23374122.svg)](https://doi.org/10.5281/zenodo.21932717)
+<p align="center">
+  <a href="https://doi.org/10.5281/zenodo.21976300"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.21976300.svg" alt="DOI"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python: 3.10+"></a>
+</p>
 
-A simple Python-based GUI for seismic waveform visualization, frequency analysis, and manual arrival picking. It utilizes **PyQt6** for the interface, **PyQtGraph** for high-performance plotting, and **ObsPy** for seismic data handling.
-It is partially written by Gemini 3.6 Flash (High) Antigravity.
+<p align="center">
+  <b>PyPicker</b> is a modern, high-performance Python desktop application for seismic waveform visualization, frequency and time-frequency analysis, manual arrival picking, hypocentral earthquake location, and interactive station mapping.
+</p>
 
-## Features
-- **Waveform Visualization:** Load SAC, MSEED, and other formats supported by ObsPy.
-- **Spectrum Analysis:** Toggle between time-domain waveforms and frequency-domain spectra (Log/Lin scales).
-- **Signal Processing:** Integrated demeaning, detrending, and filtering (HighPass, LowPass, BandPass). Signals can be normalized using maximum amplitude for each station.
-- **Interactive Picking:** 
-  - Single-click to pick arrival times.
-  - Drag vertically while picking to define uncertainty.
-  - Supports P, S, and custom phase labels.
-  - Set Polarity (Up/Down) and Onset (Emergent/Impulsive) attributes.
-  - Two picking modes ("Sidebar" or "Popup") to streamline metadata entry.
-- **Station Reordering:** Dynamically sort stations by Station Name, Epicentral Distance or earliest P/S arrival.
-- **Theoretical Arrivals:** Automatically calculate and plot theoretical travel times (P and S) using `obspy.taup` and the velocity model defined in `config.json` (e.g. `iasp91`).
-- **Interactive Pick Table:** The table is populated while picking arrivals. Values are editable and contemporaneusly updated in the plot.
-- **Data Export & Import:** Save picks back into SAC headers, export a picking summary to CSV, or Import/Export fully compliant **QuakeML** files.
-- **Customizable:** Use `config.json` to define keyboard shortcuts and UI colors.
+<p align="center">
+  <img src="doc/images/PyPicker_demo.gif" alt="PyPicker Interactive Demonstration" width="850">
+</p>
 
-## Project Structure
-- `seismic_picker_qt.py`: The main application script (GUI and logic).
-- `picker_utils_qt.py`: Utility functions for signal processing, file I/O, and SAC header management.
-- `config.json`: Configuration file for shortcuts and visual themes.
-- `requirements.txt`: List of Python dependencies.
-
-## Installation & Usage
-
-### Option 1: Pre-compiled Packages & Binaries (Recommended)
-Download the latest version for your distribution from **[GitHub Releases](https://github.com/DonatoTalone/PyPicker/releases)**:
-
-- **Debian / Ubuntu / Mint (`.deb`):**
-  ```bash
-  sudo dpkg -i pypicker-1.0.0-debian-ubuntu.deb
-  ```
-- **Fedora / RHEL / CentOS (`.rpm`):**
-  ```bash
-  sudo dnf install ./pypicker-1.0.0-fedora-rhel.rpm
-  ```
-- **Arch Linux / Manjaro (`.pkg.tar.zst`):**
-  ```bash
-  sudo pacman -U ./pypicker-1.0.0-archlinux.pkg.tar.zst
-  ```
-- **Generic Linux (Standalone Zip):**
-  Download `PyPicker-Linux-x86_64.zip`, extract, and execute `./PyPicker`.
-- **Windows (Standalone Zip):**
-  Download `PyPicker-Windows-x64.zip`, extract, and run `PyPicker.exe`.
+<p align="center">
+  <sub>🎬 <i>Full-resolution demonstration video available in <a href="doc/images/PyPicker_use.mp4"><code>doc/images/PyPicker_use.mp4</code></a></i></sub>
+</p>
 
 ---
 
-### Option 2: Running from Source
+## Key Features
 
-#### 1. Create a Virtual Environment
-It is recommended to use a virtual environment to avoid dependency conflicts.
-
-```bash
-# Create environment
-python -m venv pypicker
-
-# Activate (Windows)
-pypicker\Scripts\activate
-
-# Activate (macOS/Linux)
-source pypicker/bin/activate
-```
-
-#### 2. Install Dependencies
-
-Use the provided `requirements.txt` file:
-
-```bash
-pip install -r requirements.txt
-```
-
-#### 3. Run the Application
-
-```bash
-python seismic_picker_qt.py
-```
+- **Multi-Format Waveform Support**: Load SAC, MiniSEED, and all formats readable by ObsPy.
+- **Flexible Display Modes**: Single Station, All Stations, and Focus Mode.
+- **Focus Mode & Time-Frequency Scalograms**: Compare raw traces, filtered waveforms, and continuous Morlet scalograms with synchronized time axes.
+- **Signal Preprocessing**: Demean, linear detrend, station-shared normalization, and Butterworth band-pass, low-pass, and high-pass filtering.
+- **Accurate Arrival Picking**: Manual and instant hotkey picking (`1` for P, `2` for S) with interactive uncertainty intervals ($\pm \Delta t$), polarities, and onsets.
+- **Integrated Hypo71 Location (`hypo71py`)**: Solve for earthquake hypocenter coordinates, origin time, RMS, and phase residuals directly from picks using a 1D crustal velocity model.
+- **Focal Mechanism Inversion (FOCMEC)**: Solve for double-couple fault planes (Strike, Dip, Rake), kinematic P/T axes, and tectonic regime using P-wave polarities via grid search, with interactive beachball stereonet display and CSV export.
+- **Coherent Theoretical Arrivals**: Shared 1D velocity structure between Hypo71 and ObsPy TauP theoretical arrival curves.
+- **Interactive Geographic Map**: Cartopy-powered map with DEM relief, transparency control, FDSN station inventory (INGV), and live epicenter tracking.
+- **Protected File Writing**: Save relocated SAC files with `_hypo71` suffix into `h71_localized/` without modifying original files.
+- **Pick Import & Export**: Full compatibility with CSV, QuakeML, and SeisGram2K `.pick` formats.
+- **Customizable Environment**: Configurable shortcuts and colors via persistent user configuration (`~/.config/PyPicker/`).
 
 ---
 
-## How to Use
+## Quick Start
 
-1. **Open Data:** Click "Open Waveforms" and select your seismic files.
+### 1. Download Precompiled Binaries
+Standalone packages and system packages are available on [GitHub Releases](https://github.com/DonatoTalone/PyPicker/releases):
+- **Linux**: Standalone `.zip` or packages for Debian/Ubuntu (`.deb`), Fedora/RHEL (`.rpm`), and Arch Linux (`.pkg.tar.zst`).
+- **Windows**: Standalone `.zip` with `PyPicker.exe`.
+- **macOS**: Standalone `.zip` containing `PyPicker.app` (Apple Silicon and Intel).
 
-2. **Pick Arrivals:**
-   - Ensure "Waveform" mode is active.
-   - **Option 1 (Mouse):** Click on the trace to set a pick.
-   - **Option 2 (Keyboard):** Hover your mouse over the trace and press `1` (for P phase) or `2` (for S phase).
-   - While holding/moving the mouse vertically, the purple shaded area (uncertainty) will expand/contract.
-   - Release or click again to finalize. If "Popup" picking mode is active, a dialog will ask you to confirm Phase, Polarity, and Onset.
+### 2. Install from Source
 
-3. **Navigation & View:** 
-   - Use the sidebar or keyboard shortcuts (default: A for previous, D for next) to cycle through stations.
+```bash
+git clone --branch dev https://github.com/DonatoTalone/PyPicker.git
+cd PyPicker
 
-4. **Save & Export:** Use "Save as SAC" to modify the original file headers or "Export Picks" to save the picks to CSV or QuakeML. Use "Import Picks" to load picks from existing files.
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+python -m pip install -r requirements.txt
+python -m pip install -e .
+```
+
+Launch PyPicker from any directory:
+```bash
+pypicker
+```
+*(Or run `python seismic_picker_qt.py` directly).*
+
+---
 
 ## Default Shortcuts
 
-Can be modified in `config.json`:
+Shortcuts can be customized in `~/.config/PyPicker/config.json`.
 
-- `1` / `2`: Quick pick P phase / S phase at current mouse position
-- `A` / `D`: Previous / Next Station
-- `P`: Select P phase
-- `S`: Select S phase
-- `R`: Reset Zoom
-- `F`: Toggle BandPass filter
-- `C`: Select Custom phase
-- `Q`: Rotate/Cycle between P and S phases
-- `Ctrl+S`: Save picks to SAC headers
-- `Ctrl+E`: Export picks to CSV/QuakeML
+| Shortcut | Action |
+| --- | --- |
+| `1` / `2` | Instant P / S pick at mouse cursor position |
+| `A` / `D` | Previous / next station |
+| `P` / `S` | Select P / S phase mode |
+| `C` | Select custom phase |
+| `Q` | Toggle between P and S |
+| `R` | Reset zoom / pan |
+| `F` | Toggle filtering on / off |
+| `L` | Open Hypo71 Earthquake Location dialog |
+| `M` | Open Geographic Map (DEM, stations & epicenter) |
+| `Ctrl+S` | Save picks to SAC headers |
+| `Ctrl+E` | Export picks (CSV / QuakeML) |
 
-## License
-The code is released under [GNU General Public License](./LICENSE).
+---
+
+## Documentation
+
+Full, detailed documentation is available in the [`doc/`](./doc/) directory:
+
+- [**Documentation Overview**](./doc/README.md)
+- [**Installation Guide**](./doc/installation.md) — Precompiled packages, Linux distributions, macOS, Windows, and virtual environments.
+- [**Configuration & Preferences**](./doc/configuration.md) — Directory layout, user overrides, `config.json`, and `velocity_model.json`.
+- [**Waveform Analysis & Visualization**](./doc/waveform_analysis.md) — View modes, spectra, normalization, filtering, and Morlet scalograms.
+- [**Plugin System & Architecture**](./doc/plugin_system.md) — Modular plugin model, directory layout, UI integration, and developing custom plugins.
+- [**Hypocentral Earthquake Location**](./doc/hypo71_localization.md) — Geiger's method, 1D crustal velocity models, Trial Depth ($Z_{TR}$), residuals, and saving to `h71_localized/`.
+- [**Earthquake Focal Mechanism**](./doc/focmec_focal_mechanism.md) — Double-couple point sources, Aki & Richards convention, P-wave polarities, FOCMEC grid search, and stereographic beachball visualization.
+- [**Geographic Map & Seismic Stations**](./doc/geographic_map.md) — Interactive Cartopy map, DEM relief in transparency, FDSN station catalog (INGV), and live epicenter tracking.
+- [**Building & Releases**](./doc/building_and_release.md) — Compiling executables with PyInstaller and the GitHub Actions CI/CD matrix.
+
+---
+
+## Project Structure
+
+```text
+seismic_picker_qt.py       GUI application, plotting, and picking interaction
+picker_utils_qt.py         Configuration syncing, preprocessing, and pick I/O
+config/                    Configuration templates, velocity models, and plugins
+├── config.json            Default user preferences
+├── velocity_model.json    Default 1D crustal velocity model (Hypo71 + TauP)
+├── picker_utils_qt.py     Reference copy of utilities
+└── plugins/               Integrated plugins (hypo71py, focmecpy, map)
+doc/                       Comprehensive project documentation
+examples/                  Example waveform datasets (Campi Flegrei, USGS Japan)
+pyproject.toml             Package build and CLI entry-point configuration
+requirements.txt           Pinned Python dependencies
+PyPicker.spec              PyInstaller build definition
+.github/workflows/         Automated multi-platform release CI/CD
+CITATION.cff               Citation metadata
+LICENSE                    GNU General Public License v3
+```
+
+---
+
+## Citation & License
+
+If you use PyPicker in scientific research, please cite it using the metadata in [`CITATION.cff`](./CITATION.cff) and DOI [10.5281/zenodo.21976300](https://doi.org/10.5281/zenodo.21976300).
+
+### Third-Party Software & Acknowledgments
+
+- **hypo71py**: Kris Vanneste and Dan Sandiford, Python implementation of the HYPO71 earthquake location algorithm ([earthquake-research-group/hypo71py](https://github.com/earthquake-research-group/hypo71py)), based on Lee & Lahr (1972, 1975).
+- **FOCMEC / SurfQuake**: Arthur Snoke (1984, 2003) and Roberto Cabieces et al. ([ProjectISP / SurfQuake](https://projectisp.github.io/surfquaketutorial.github.io/focmec/)).
+
+The code is developed with the help of AI models: Gemini 3.6 Flash (High) Antigravity, GPT6.1 Sol (Reasoning), Claude Sonnet 5.5 (Extra).
+
+PyPicker is released under the [GNU General Public License v3](./LICENSE).

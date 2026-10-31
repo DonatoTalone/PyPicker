@@ -1,0 +1,9 @@
+{
+  "name": "Default 1D Crustal Model",
+  "layers": [
+    {"depth_km": 0.0, "vp": 5.00, "vs": 2.89},
+    {"depth_km": 11.1, "vp": 6.50, "vs": 3.75},
+    {"depth_km": 38.0, "vp": 8.05, "vs": 4.65}
+  ],
+  "vp_vs_ratio": 1.73
+}

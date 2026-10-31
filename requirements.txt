@@ -13,6 +13,7 @@ matplotlib==3.10.8
 numpy==2.4.3
 obspy==1.4.2
 packaging==26.0
+pandas>=2.0.0
 pillow==12.1.1
 pyparsing==3.3.2
 PyQt6==6.10.2
@@ -26,3 +27,6 @@ setuptools==80.10.2
 six==1.17.0
 SQLAlchemy==1.4.54
 urllib3==2.6.3
+cartopy>=0.23.0
+pyproj>=3.6.0
+shapely>=2.0.0

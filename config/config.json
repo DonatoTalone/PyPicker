@@ -11,7 +11,11 @@
         "export_csv": "Ctrl+E",
         "toggle_filter": "F",
         "pick_p": "1",
-        "pick_s": "2"
+        "pick_s": "2",
+        "localize": "L",
+        "focmec": "K",
+        "open_map": "M",
+        "help_doc": "F1"
     },
     "colors": {
         "Z": "#e74c3c",
@@ -25,8 +29,11 @@
         "low_f": 1.0,
         "high_f": 20.0,
         "filter_type": "BandPass (f1 and f2)",
-        "velocity_model": "iasp91",
+        "velocity_model": "velocity_model.json",
         "show_theoretical_arrivals": false,
-        "picking_mode": "Popup"
+        "picking_mode": "Popup",
+        "station_client": "INGV",
+        "map_dem_alpha": 0.4,
+        "catalog_file": "~/Desktop/seismic_catalog.txt"
     }
 }

@@ -1,0 +1,96 @@
+!    -*- f90 -*-
+! Note: the context of this file is case sensitive.
+
+python module trvdrv ! in 
+    interface  ! in :trvdrv
+        subroutine trvdrv(isw,v,d,depth,vsq,nl,thk,h,g,f,tid,did,flt,delta,dx,dy,elev,nr,kdx,kno,fltep,z,zsq,nv,nrp,x,t,anin) ! in :trvdrv:trvdrv.f
+            character*4 :: isw
+            real*4 dimension(2,21) :: v
+            real*4 dimension(21) :: d
+            real*4 dimension(21) :: depth
+            real*4 dimension(2,21) :: vsq
+            integer :: nl
+            real*4 dimension(21) :: thk
+            real*4 dimension(21) :: h
+            real*4 dimension(2,4,21) :: g
+            real*4 dimension(21,21) :: f
+            real*4 dimension(2,21,21) :: tid
+            real*4 dimension(2,21,21) :: did
+            real*4 dimension(2,201) :: flt
+            real*4 dimension(501) :: delta
+            real*4 dimension(501) :: dx
+            real*4 dimension(501) :: dy
+            real*4 dimension(501) :: elev
+            integer :: nr
+            integer*4 dimension(501) :: kdx
+            integer :: kno
+            real :: fltep
+            real :: z
+            real :: zsq
+            integer :: nv
+            integer :: nrp
+            real*4 dimension(4,501) :: x
+            real*4 dimension(501) :: t
+            real*4 dimension(501) :: anin
+            real :: epsob
+            integer :: iflag
+            integer :: nlecp
+            real dimension(2,21,21) :: dxd
+            real dimension(2,21,21) :: txd
+            common /provi/ epsob,iflag
+            common /gradi/ nlecp
+            common /txcal/ dxd,txd
+        end subroutine trvdrv
+        subroutine refwav(nl,jf,tinf,didf,js,tins,dids,v,delta,tr,tmin,jm) ! in :trvdrv:trvdrv.f
+            integer :: nl
+            integer :: jf
+            real dimension(1) :: tinf
+            real dimension(1) :: didf
+            integer :: js
+            real dimension(1) :: tins
+            real dimension(1) :: dids
+            real dimension(1) :: v
+            real :: delta
+            real dimension(1) :: tr
+            real :: tmin
+            integer :: jm
+        end subroutine refwav
+        subroutine dirwav(z,jl,tkj,zstat,js,tkjs,tins,dids,delta,tmin,ff,thk,v,vsq,dtdd,dtdh,anin,t) ! in :trvdrv:trvdrv.f
+            real :: z
+            integer :: jl
+            real :: tkj
+            real :: zstat
+            integer :: js
+            real :: tkjs
+            real dimension(1) :: tins
+            real dimension(1) :: dids
+            real :: delta
+            real :: tmin
+            real :: ff
+            real dimension(1) :: thk
+            real dimension(1) :: v
+            real dimension(1) :: vsq
+            real :: dtdd
+            real :: dtdh
+            real :: anin
+            real :: t
+        end subroutine dirwav
+        subroutine prep1(nl,z,d,v,vsq,tid,did,tinj,didj,xomax,jl,tkj) ! in :trvdrv:trvdrv.f
+            integer :: nl
+            real :: z
+            real*4 dimension(21) :: d
+            real*4 dimension(21) :: v
+            real*4 dimension(21) :: vsq
+            real*4 dimension(21,21) :: tid
+            real*4 dimension(21,21) :: did
+            real*4 dimension(21) :: tinj
+            real*4 dimension(21) :: didj
+            real :: xomax
+            integer :: jl
+            real :: tkj
+        end subroutine prep1
+    end interface 
+end python module trvdrv
+
+! This file was auto-generated with f2py (version:2).
+! See http://cens.ioc.ee/projects/f2py2e/

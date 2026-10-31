@@ -1,0 +1,28 @@
+!    -*- f90 -*-
+! Note: the context of this file is case sensitive.
+
+python module azwtos ! in 
+    interface  ! in :azwtos
+        subroutine azwtos(dx,dy,nr,wt,kdx,az,azwt,key,ins,iew,gap) ! in :azwtos:azwtos.f
+            real*4 dimension(501) :: dx
+            real*4 dimension(501) :: dy
+            integer :: nr
+            real*4 dimension(501) :: wt
+            integer*4 dimension(501) :: kdx
+            real*4 dimension(501) :: az
+            real*4 dimension(501) :: azwt
+            integer*4 dimension(501) :: key
+            character dimension(201,1),intent(c) :: ins
+            character dimension(201,1),intent(c) :: iew
+            real*4 :: gap
+        end subroutine azwtos
+        subroutine sort(x,key,no) ! in :azwtos:azwtos.f
+            real dimension(no) :: x
+            integer dimension(no),depend(no) :: key
+            integer, optional,check(len(x)>=no),depend(x) :: no=len(x)
+        end subroutine sort
+    end interface 
+end python module azwtos
+
+! This file was auto-generated with f2py (version:2).
+! See http://cens.ioc.ee/projects/f2py2e/

@@ -11,3 +11,9 @@ seismic_picker_qt.dist
 .obspyck_repo
 .venv
 .vscode
+materiale_Diana
+.ruby-lsp
+plugins/__pycache__
+pypicker.egg-info
+tests
+doc/icon/Logo_PyPicker.svg

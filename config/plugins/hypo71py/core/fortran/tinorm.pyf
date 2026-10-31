@@ -1,0 +1,14 @@
+!    -*- f90 -*-
+! Note: the context of this file is case sensitive.
+
+python module tinorm ! in 
+    interface  ! in :tinorm
+        function tinorm(alpha) ! in :tinorm:tinorm.f
+            real :: alpha
+            real :: tinorm
+        end function tinorm
+    end interface 
+end python module tinorm
+
+! This file was auto-generated with f2py (version:2).
+! See http://cens.ioc.ee/projects/f2py2e/

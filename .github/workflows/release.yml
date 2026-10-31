@@ -17,6 +17,8 @@ jobs:
         include:
           - os: ubuntu-latest
           - os: windows-latest
+          - os: macos-latest
+          - os: macos-13
 
     steps:
       - name: Checkout Repository
@@ -48,10 +50,30 @@ jobs:
           sudo apt-get install -y ruby ruby-dev build-essential rpm libarchive-tools zstd
           sudo gem install --no-document fpm
 
-          # Prepare system package layout (/usr/bin/pypicker)
+          # Prepare system package layout (/usr/bin/pypicker, desktop entry, icons)
           mkdir -p pkg_dir/usr/bin
+          mkdir -p pkg_dir/usr/share/applications
+          mkdir -p pkg_dir/usr/share/icons/hicolor/scalable/apps
+          mkdir -p pkg_dir/usr/share/icons/hicolor/256x256/apps
+
           cp dist/PyPicker pkg_dir/usr/bin/pypicker
           chmod +x pkg_dir/usr/bin/pypicker
+
+          cp doc/icon/PyPicker_icon_dark.svg pkg_dir/usr/share/icons/hicolor/scalable/apps/pypicker.svg
+          cp doc/icon/PyPicker_icon_dark.png pkg_dir/usr/share/icons/hicolor/256x256/apps/pypicker.png
+
+          cat << 'EOF' > pkg_dir/usr/share/applications/pypicker.desktop
+[Desktop Entry]
+Name=PyPicker
+Comment=Seismic Waveform Picker & Analyzer
+Exec=pypicker
+Icon=pypicker
+Terminal=false
+Type=Application
+Categories=Science;Geoscience;Education;
+StartupNotify=true
+StartupWMClass=PyPicker
+EOF
 
           # 1. Generic ZIP
           cd dist
@@ -88,6 +110,17 @@ jobs:
           cd dist
           Compress-Archive -Path PyPicker.exe -DestinationPath ..\PyPicker-Windows-x64.zip
 
+      - name: Build macOS Package
+        if: runner.os == 'macOS'
+        run: |
+          ARCH=$(uname -m)
+          cd dist
+          if [ -d "PyPicker.app" ]; then
+            zip -r -y "../PyPicker-macOS-${ARCH}.zip" PyPicker.app
+          else
+            zip -r "../PyPicker-macOS-${ARCH}.zip" PyPicker
+          fi
+
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v2
         with:
@@ -97,5 +130,6 @@ jobs:
             pypicker-*-fedora-rhel.rpm
             pypicker-*-archlinux.pkg.tar.zst
             PyPicker-Windows-x64.zip
+            PyPicker-macOS-*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

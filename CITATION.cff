@@ -11,5 +11,5 @@ title: "PyPicker - Seismic Waveform Picker"
 version: 2.0.0
 identifiers:
   - type: doi
-    value: 
-date-released: 
+    value: https://doi.org/10.5281/zenodo.21932717
+date-released: 14/10/2026

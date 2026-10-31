@@ -24,7 +24,7 @@ pkgs_metadata = [
     'matplotlib', 'setuptools', 'packaging', 'pyqtgraph', 'pytz',
     'contourpy', 'cycler', 'fonttools', 'kiwisolver', 'pillow',
     'pyparsing', 'sqlalchemy', 'six', 'python-dateutil', 'PyQt6', 'pandas',
-    'cartopy', 'shapely', 'pyproj'
+    'cartopy', 'shapely', 'pyproj', 'darkdetect'
 ]
 for pkg in pkgs_metadata:
     try:
@@ -36,7 +36,7 @@ hiddenimports += [
     'decorator', 'greenlet', 'requests', 'urllib3', 'lxml', 'lxml.etree',
     'obspy.signal', 'obspy.signal.filter', 'obspy.signal.invsim', 'obspy.signal.headers',
     'obspy.taup', 'obspy.imaging', 'obspy.imaging.cm', 'matplotlib.colormaps',
-    'pandas', 'cartopy', 'shapely', 'pyproj',
+    'pandas', 'cartopy', 'shapely', 'pyproj', 'darkdetect',
     'config', 'config.plugins', 'config.plugins.hypo71_plugin', 'config.plugins.hypo71py', 'config.plugins.map_plugin',
     'config.plugins.focmec_plugin', 'config.plugins.focmecpy'
 ]
@@ -62,9 +62,9 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
-    hookspath=[],
+    hookspath=['pyinstaller_hooks'],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=['pyinstaller_hooks/rthook_obspy.py'],
     excludes=['PyQt5', 'PySide2', 'PySide6', 'matplotlib.backends.backend_qt5agg'],
     noarchive=False,
     optimize=0,

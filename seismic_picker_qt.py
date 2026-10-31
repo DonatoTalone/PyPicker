@@ -16,7 +16,10 @@ if _plugins_dir not in sys.path:
     sys.path.insert(0, _plugins_dir)
 
 # Prevent ObsPy from attempting to run git describe on host repo in frozen PyInstaller builds
+# and ensure inspect.getfile correctly resolves to sys._MEIPASS for obspy colormaps (viridis fix)
 if getattr(sys, "frozen", False):
+    import inspect
+    import os
     import subprocess
     import warnings
     warnings.filterwarnings("ignore", message=".*ObsPy could not determine its version number.*")
@@ -28,9 +31,41 @@ if getattr(sys, "frozen", False):
             return _orig_check_output(cmd, *args, **kwargs)  # ty: ignore[call-non-callable]
         subprocess.check_output = _safe_check_output  # ty: ignore[invalid-assignment]
 
+    if not getattr(inspect.getfile, "_is_obspy_patched", False):
+        _orig_getfile = inspect.getfile
+
+        def _safe_getfile(obj):
+            filename = _orig_getfile(obj)
+            meipass = getattr(sys, "_MEIPASS", None)
+            if meipass and isinstance(filename, str) and not os.path.exists(filename):
+                idx = filename.find("obspy")
+                if idx != -1:
+                    cand = os.path.join(meipass, filename[idx:])
+                    if os.path.exists(cand) or os.path.exists(os.path.dirname(cand)):
+                        return cand
+            return filename
+
+        _safe_getfile._is_obspy_patched = True
+        inspect.getfile = _safe_getfile
+
+# Ensure obspy.imaging.cm has viridis colormaps registered
+try:
+    import obspy.imaging.cm as obspy_cm
+    if "viridis" not in obspy_cm.__dict__:
+        from matplotlib import colormaps
+        obspy_cm.__dict__["viridis"] = colormaps["viridis"]
+        obspy_cm.__dict__["viridis_r"] = colormaps["viridis"].reversed()
+        obspy_cm.__dict__["obspy_sequential"] = colormaps["viridis"]
+        obspy_cm.__dict__["obspy_sequential_r"] = colormaps["viridis"].reversed()
+        if "pqlx" not in obspy_cm.__dict__ and "gist_rainbow" in colormaps:
+            obspy_cm.__dict__["pqlx"] = colormaps["gist_rainbow"]
+except Exception:
+    pass
+
 logger = logging.getLogger(__name__)
 
-__version__ = "2.0.0"
+__version__ = "3.0.0"
+
 
 import numpy as np
 import pyqtgraph as pg
@@ -1002,6 +1037,8 @@ class SeismicPickerQT(QMainWindow):
         plugins_menu.addSeparator()  # ty: ignore[unresolved-attribute]
         act_open_plugins = plugins_menu.addAction("Open &Plugins Folder")  # ty: ignore[unresolved-attribute]
         act_open_plugins.triggered.connect(self.open_plugins_folder)  # ty: ignore[unresolved-attribute]
+        act_open_config = plugins_menu.addAction("Open &Configuration Folder")  # ty: ignore[unresolved-attribute]
+        act_open_config.triggered.connect(self.open_config_folder)  # ty: ignore[unresolved-attribute]
 
         act_edit_model = plugins_menu.addAction("&Edit Velocity Model")  # ty: ignore[unresolved-attribute]
         act_edit_model.triggered.connect(self.open_velocity_model_file)  # ty: ignore[unresolved-attribute]
@@ -1263,14 +1300,11 @@ class SeismicPickerQT(QMainWindow):
 
     def open_config_folder(self):
         folder = utils.get_config_dir()
-
-        if not QDesktopServices.openUrl(
-            QUrl.fromLocalFile(str(folder))
-        ):
+        if not utils.open_path_in_system(folder):
             QMessageBox.warning(
                 self,
                 "Configuration Folder",
-                f"Open the configuration folder:\n{folder}",
+                f"Unable to open the configuration folder automatically:\n{folder}",
             )
 
     def _connect_signals(self):
@@ -1288,6 +1322,13 @@ class SeismicPickerQT(QMainWindow):
         self.f_high.valueChanged.connect(self._on_freq_changed)
         self.show_theo.stateChanged.connect(self._on_theo_changed)
         self.theme_sel.currentTextChanged.connect(self.apply_theme)
+        try:
+            hints = QApplication.styleHints()
+            hints.colorSchemeChanged.connect(
+                lambda _: self.apply_theme("System") if self.theme_sel.currentText() == "System" else None
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
         self.win.scene().sigMouseMoved.connect(self.on_mouse_move)  # ty: ignore[unresolved-attribute]
         self.win.scene().sigMouseClicked.connect(self.on_mouse_click_release)  # ty: ignore[unresolved-attribute]
@@ -1462,42 +1503,22 @@ class SeismicPickerQT(QMainWindow):
 
         else: # System
             # Detect system dark/light appearance reliably
-            is_dark = False
-            # 1. Check Qt6 styleHints colorScheme if available
-            try:
-                hints = QApplication.styleHints()
-                if hasattr(Qt, "ColorScheme"):
-                    cs = hints.colorScheme()  # ty: ignore[unresolved-attribute]
-                    if cs == Qt.ColorScheme.Dark:
-                        is_dark = True
-                    elif cs == Qt.ColorScheme.Light:
-                        is_dark = False
-                    else:
-                        is_dark = None
-            except Exception:  # noqa: BLE001
-                is_dark = None
+            is_dark = utils.detect_system_dark_mode()
 
-            # 2. Check freedesktop / GNOME dark theme setting via gsettings or XDG (Linux)
+            # 1. Fallback to Qt6 styleHints colorScheme if available and undetermined
             if is_dark is None:
-                import os
-                import subprocess
-                color_scheme_env = os.environ.get("QT_STYLE_OVERRIDE", "").lower()
-                if "dark" in color_scheme_env:
-                    is_dark = True
-                else:
-                    try:
-                        out = subprocess.run(
-                            ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"],
-                            check=False, capture_output=True, text=True, timeout=0.5
-                        )
-                        if "dark" in out.stdout.lower():
+                try:
+                    hints = QApplication.styleHints()
+                    if hasattr(Qt, "ColorScheme"):
+                        cs = hints.colorScheme()  # ty: ignore[unresolved-attribute]
+                        if cs == Qt.ColorScheme.Dark:
                             is_dark = True
-                        elif "default" in out.stdout.lower() or "light" in out.stdout.lower():
+                        elif cs == Qt.ColorScheme.Light:
                             is_dark = False
-                    except Exception:  # noqa: BLE001, S110
-                        pass
+                except Exception:  # noqa: BLE001
+                    pass
 
-            # 3. Fallback to standardPalette luminance
+            # 2. Fallback to standardPalette luminance
             if is_dark is None:
                 std_pal = app.style().standardPalette() if app else self.style().standardPalette()  # ty: ignore[unresolved-attribute]
                 win_col = std_pal.color(QPalette.ColorRole.Window)
@@ -1526,13 +1547,25 @@ class SeismicPickerQT(QMainWindow):
                 self.setPalette(palette)
                 self.setStyleSheet("")
             else:
+                bg_color = "#ffffff"
+                fg_color = "#000000"
+                input_bg = "#f9f9f9"
+                palette = QPalette()
+                palette.setColor(QPalette.ColorRole.Window, pg.mkColor("#f4f4f4"))
+                palette.setColor(QPalette.ColorRole.WindowText, pg.mkColor(fg_color))
+                palette.setColor(QPalette.ColorRole.Base, pg.mkColor(input_bg))
+                palette.setColor(QPalette.ColorRole.AlternateBase, pg.mkColor("#e9e9e9"))
+                palette.setColor(QPalette.ColorRole.ToolTipBase, pg.mkColor(fg_color))
+                palette.setColor(QPalette.ColorRole.ToolTipText, pg.mkColor(fg_color))
+                palette.setColor(QPalette.ColorRole.Text, pg.mkColor(fg_color))
+                palette.setColor(QPalette.ColorRole.Button, pg.mkColor("#e8e8e8"))
+                palette.setColor(QPalette.ColorRole.ButtonText, pg.mkColor(fg_color))
+                palette.setColor(QPalette.ColorRole.Highlight, pg.mkColor("#2746ae"))
+                palette.setColor(QPalette.ColorRole.HighlightedText, pg.mkColor("#ffffff"))
                 if app:
-                    app.setPalette(app.style().standardPalette())  # ty: ignore[unresolved-attribute]
-                self.setPalette(self.style().standardPalette())  # ty: ignore[unresolved-attribute]
+                    app.setPalette(palette)  # ty: ignore[unresolved-attribute]
+                self.setPalette(palette)
                 self.setStyleSheet("")
-                palette = self.palette()
-                bg_color = palette.color(QPalette.ColorRole.Window).name()
-                fg_color = palette.color(QPalette.ColorRole.WindowText).name()
 
         self.current_bg = bg_color
         self.fg_color = fg_color
@@ -2600,15 +2633,24 @@ class SeismicPickerQT(QMainWindow):
     def open_plugins_folder(self):
         """Open user plugins directory in file manager."""
         p_dir = utils.get_plugins_dir()
-        p_dir.mkdir(parents=True, exist_ok=True)
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(p_dir)))
+        if not utils.open_path_in_system(p_dir):
+            QMessageBox.warning(
+                self,
+                "Plugins Folder",
+                f"Unable to open the plugins folder automatically:\n{p_dir}",
+            )
 
     def open_velocity_model_file(self):
         """Open user velocity_model.json file in system default editor."""
         v_path = utils.get_velocity_model_path()
         if not v_path.exists():
             utils.sync_velocity_model()
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(v_path)))
+        if not utils.open_path_in_system(v_path):
+            QMessageBox.warning(
+                self,
+                "Velocity Model",
+                f"Unable to open the velocity model file:\n{v_path}",
+            )
 
     def open_seismic_catalog(self):
         """Open the GIS-ready tab-separated seismic catalog (.txt) in system default editor/spreadsheet viewer."""
@@ -2616,8 +2658,12 @@ class SeismicPickerQT(QMainWindow):
         if not cat_path.exists():
             # If not yet created, initialize with headers so the user can inspect it
             utils.update_seismic_catalog(cat_path, {})
-            # Wait or ensure file exists
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(cat_path)))
+        if not utils.open_path_in_system(cat_path):
+            QMessageBox.warning(
+                self,
+                "Seismic Catalog",
+                f"Unable to open the seismic catalog file:\n{cat_path}",
+            )
 
     def open_hypo71_dialog(self):
         """Open or show the Hypo71 earthquake location dialog."""

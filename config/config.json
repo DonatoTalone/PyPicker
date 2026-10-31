@@ -34,6 +34,6 @@
         "picking_mode": "Popup",
         "station_client": "INGV",
         "map_dem_alpha": 0.4,
-        "catalog_file": "~/Desktop/seismic_catalog.txt"
+        "catalog_file": ""
     }
 }

@@ -15,7 +15,7 @@ from obspy.taup import TauPyModel
 from PyQt6.QtCore import QStandardPaths
 from PyQt6.QtGui import QIcon
 
-__version__ = "2.0.0"
+__version__ = "3.0.0"
 
 APP_CONFIG_FOLDER = "PyPicker"
 
@@ -154,14 +154,202 @@ def get_icon_dir():
         return app_icon
     return icon_dir
 
+def detect_system_dark_mode():
+    """
+    Detect whether the host OS is configured in Dark Mode.
+    Returns True for Dark, False for Light, or None if undetermined.
+    """
+    # 1. darkdetect package (if installed)
+    try:
+        import darkdetect
+        detected = darkdetect.theme()
+        if detected:
+            return detected.lower() == "dark"
+    except Exception:
+        pass
+
+    # 2. Linux
+    if sys.platform.startswith("linux"):
+        # a) Freedesktop portal Settings appearance color-scheme
+        try:
+            import subprocess
+            res = subprocess.run(
+                [
+                    "dbus-send",
+                    "--session",
+                    "--print-reply=literal",
+                    "--dest=org.freedesktop.portal.Desktop",
+                    "/org/freedesktop/portal/desktop",
+                    "org.freedesktop.portal.Settings.Read",
+                    "string:org.freedesktop.appearance",
+                    "string:color-scheme",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=0.5,
+            )
+            if res.returncode == 0:
+                val = res.stdout.strip()
+                if "uint32 1" in val:
+                    return True
+                elif "uint32 2" in val:
+                    return False
+        except Exception:
+            pass
+
+        # b) GNOME / XDG gsettings
+        try:
+            import subprocess
+            res = subprocess.run(
+                ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=0.5,
+            )
+            if "dark" in res.stdout.lower():
+                return True
+            elif "light" in res.stdout.lower():
+                return False
+        except Exception:
+            pass
+
+        try:
+            import subprocess
+            res = subprocess.run(
+                ["gsettings", "get", "org.gnome.desktop.interface", "gtk-theme"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=0.5,
+            )
+            if "-dark" in res.stdout.lower():
+                return True
+        except Exception:
+            pass
+
+        # c) KDE Plasma kdeglobals
+        try:
+            kde_cfg = Path.home() / ".config" / "kdeglobals"
+            if kde_cfg.exists():
+                content = kde_cfg.read_text(errors="ignore")
+                for line in content.splitlines():
+                    if line.strip().startswith("ColorScheme="):
+                        if "dark" in line.lower():
+                            return True
+                        elif "light" in line.lower():
+                            return False
+        except Exception:
+            pass
+
+        # d) Desktop Environment Variables
+        for var in ("QT_STYLE_OVERRIDE", "GTK_THEME"):
+            val = os.environ.get(var, "").lower()
+            if "dark" in val:
+                return True
+            elif "light" in val:
+                return False
+
+    # 3. macOS
+    elif sys.platform == "darwin":
+        try:
+            import subprocess
+            res = subprocess.run(
+                ["defaults", "read", "-g", "AppleInterfaceStyle"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=0.5,
+            )
+            if "dark" in res.stdout.lower():
+                return True
+            else:
+                return False
+        except Exception:
+            return False
+
+    # 4. Windows
+    elif sys.platform.startswith("win"):
+        try:
+            import winreg
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+            )
+            val, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+            winreg.CloseKey(key)
+            return val == 0
+        except Exception:
+            pass
+
+    return None
+
+def open_path_in_system(target_path):
+    """
+    Open a file or directory using the operating system's default application or file manager.
+    Ensures directory exists and provides multi-tier fallbacks (QDesktopServices, xdg-open, os.startfile, open).
+    """
+    import subprocess
+    from PyQt6.QtCore import QUrl
+    from PyQt6.QtGui import QDesktopServices
+
+    path = Path(os.path.expanduser(os.path.expandvars(str(target_path)))).resolve()
+    if not path.exists():
+        if path.suffix:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            path.mkdir(parents=True, exist_ok=True)
+
+    url = QUrl.fromLocalFile(str(path))
+    if QDesktopServices.openUrl(url):
+        return True
+
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(str(path))
+            return True
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])
+            return True
+        else:
+            subprocess.Popen(["xdg-open", str(path)])
+            return True
+    except Exception:
+        return False
+
+def get_system_desktop_dir():
+    """
+    Return the localized desktop directory for the current operating system.
+    Supports localized folder names (e.g. ~/Scrivania in Italian, ~/Bureau in French, ~/Escritorio in Spanish)
+    via QStandardPaths, with fallbacks.
+    """
+    loc = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DesktopLocation)
+    if loc:
+        d = Path(loc)
+        if d.is_dir():
+            return d
+
+    fallback = Path.home() / "Desktop"
+    if fallback.is_dir():
+        return fallback
+
+    return Path.home()
+
 def get_app_icon(theme="dark"):
     """
     Return a QIcon for PyPicker.
-    theme can be 'dark' or 'white'/'light'.
+    theme can be 'dark', 'white'/'light', or 'System'.
     Tries PNG, SVG, or ICO formats.
     """
+    if str(theme).lower() == "system":
+        is_dark = detect_system_dark_mode()
+        theme_key = "dark" if (is_dark is not False) else "white"
+    else:
+        theme_key = "dark" if str(theme).lower() == "dark" else "white"
+
     icon_dir = get_icon_dir()
-    prefix = "PyPicker_icon_dark" if theme in ("dark", "System") else "PyPicker_icon_white"
+    prefix = f"PyPicker_icon_{theme_key}"
     
     candidates = [
         icon_dir / f"{prefix}.png",
@@ -179,8 +367,14 @@ def get_app_logo_path(theme="dark"):
     """
     Return the Path to the PyPicker logo image (dark or white/light).
     """
+    if str(theme).lower() == "system":
+        is_dark = detect_system_dark_mode()
+        theme_key = "dark" if (is_dark is not False) else "white"
+    else:
+        theme_key = "dark" if str(theme).lower() == "dark" else "white"
+
     icon_dir = get_icon_dir()
-    name = "PyPicker_logo_dark.png" if theme in ("dark", "System") else "PyPicker_logo_white.png"
+    name = f"PyPicker_logo_{theme_key}.png"
     p = icon_dir / name
     if p.exists():
         return p
@@ -188,6 +382,7 @@ def get_app_logo_path(theme="dark"):
     if svg_p.exists():
         return svg_p
     return icon_dir / "PyPicker_logo_dark.png"
+
 
 def sync_configuration(overwrite=False):
     """
@@ -1254,19 +1449,37 @@ SEISMIC_CATALOG_COLUMNS = [
 def get_default_catalog_path(cfg=None):
     """
     Get the configured or default path for the seismic catalog .txt file.
-    Default: ~/Desktop/seismic_catalog.txt (fallback to ~/seismic_catalog.txt if Desktop not present).
+    Default: OS localized Desktop (e.g. ~/Scrivania/seismic_catalog.txt or ~/Desktop/seismic_catalog.txt).
     """
     if cfg is None:
         cfg = load_config()
 
-    cat_path_str = cfg.get("defaults", {}).get("catalog_file", "")
-    if cat_path_str:
-        return Path(os.path.expanduser(os.path.expandvars(cat_path_str)))
+    cat_path_str = str(cfg.get("defaults", {}).get("catalog_file", "")).strip()
+    desktop_dir = get_system_desktop_dir()
 
-    desktop = Path.home() / "Desktop"
-    if desktop.is_dir():
-        return desktop / "seismic_catalog.txt"
-    return Path.home() / "seismic_catalog.txt"
+    if not cat_path_str:
+        target = desktop_dir / "seismic_catalog.txt"
+    else:
+        norm = cat_path_str.replace("\\", "/").rstrip("/")
+        # If user has the legacy hardcoded default "~/Desktop/seismic_catalog.txt"
+        # but the localized desktop is different (e.g. ~/Scrivania), redirect to localized desktop
+        if norm in ("~/desktop/seismic_catalog.txt", "~/Desktop/seismic_catalog.txt", "seismic_catalog.txt"):
+            target = desktop_dir / "seismic_catalog.txt"
+        else:
+            target = Path(os.path.expanduser(os.path.expandvars(cat_path_str)))
+
+    # Seamless migration: if a catalog already exists at ~/Desktop/seismic_catalog.txt
+    # but the localized desktop is different (e.g. ~/Scrivania/seismic_catalog.txt) and does not exist yet,
+    # copy the existing catalog to the real desktop so no user data is lost.
+    legacy_path = Path.home() / "Desktop" / "seismic_catalog.txt"
+    if legacy_path.exists() and target != legacy_path and not target.exists():
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(legacy_path, target)
+        except Exception:
+            pass
+
+    return target
 
 
 def calculate_focmec_quality(num_polarities, misfits, gap_deg):
@@ -1309,7 +1522,7 @@ def get_or_create_event_id(stream, picks=None, hypocenter=None):
         if valid_paths:
             parents = {p.parent.name for p in valid_paths}
             if len(parents) == 1:
-                parent_name = list(parents)[0]
+                parent_name = next(iter(parents))
                 if parent_name and parent_name not in (".", "/", "\\", "h71_localized"):
                     return parent_name
 
@@ -1324,7 +1537,7 @@ def get_or_create_event_id(stream, picks=None, hypocenter=None):
         if not isinstance(t_ref, UTCDateTime):
             try:
                 t_ref = UTCDateTime(t_ref)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 t_ref = None
         if t_ref:
             return f"EV_{t_ref.strftime('%Y%m%d_%H%M%S')}"
@@ -1383,7 +1596,7 @@ def update_seismic_catalog(catalog_path, event_dict):
     if new_ot_str:
         try:
             new_ot = UTCDateTime(new_ot_str)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
     match_idx = -1
@@ -1402,7 +1615,7 @@ def update_seismic_catalog(catalog_path, event_dict):
                 if abs(new_ot - r_ot) <= 30.0:
                     match_idx = i
                     break
-            except Exception:
+            except Exception:  # noqa: BLE001, S110
                 pass
 
     # Normalize incoming fields

@@ -15,7 +15,7 @@ from obspy.taup import TauPyModel
 from PyQt6.QtCore import QStandardPaths
 from PyQt6.QtGui import QIcon
 
-__version__ = "3.0.0"
+__version__ = "3.0.1"
 
 APP_CONFIG_FOLDER = "PyPicker"
 

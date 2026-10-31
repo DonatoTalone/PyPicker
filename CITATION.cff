@@ -8,8 +8,8 @@ authors:
     given-names: Giorgia
     orcid: https://orcid.org/0009-0007-3212-9799
 title: "PyPicker - Seismic Waveform Picker"
-version: 3.0.0
+version: 3.0.1
 identifiers:
   - type: doi
-    value: https://doi.org/10.5281/zenodo.21932717
+    value: https://doi.org/10.5281/zenodo.23846581
 date-released: 31/10/2026

@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://doi.org/10.5281/zenodo.21976300"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.21976300.svg" alt="DOI"></a>
+  <a href="https://doi.org/10.5281/zenodo.23846581"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23846581.svg" alt="DOI"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python: 3.10+"></a>
 </p>

@@ -17,3 +17,4 @@ plugins/__pycache__
 pypicker.egg-info
 tests
 doc/icon/Logo_PyPicker.svg
+.pytest_cache

@@ -37,9 +37,9 @@ import pyqtgraph as pg
 
 # Prevent PyQtGraph AttributeError in PlotDataItem when getViewBox falls back to GraphicsView / GraphicsLayoutWidget
 if not hasattr(pg.GraphicsView, "autoRangeEnabled"):
-    pg.GraphicsView.autoRangeEnabled = lambda self: [False, False]  # ty: ignore[attr-defined]
+    pg.GraphicsView.autoRangeEnabled = lambda self: [False, False]  # ty: ignore[attr-defined]  # ty: ignore[unresolved-attribute, ignore-comment-unknown-rule]
 if not hasattr(pg.GraphicsLayoutWidget, "autoRangeEnabled"):
-    pg.GraphicsLayoutWidget.autoRangeEnabled = lambda self: [False, False]  # ty: ignore[attr-defined]
+    pg.GraphicsLayoutWidget.autoRangeEnabled = lambda self: [False, False]  # ty: ignore[attr-defined]  # ty: ignore[unresolved-attribute, ignore-comment-unknown-rule]
 from obspy import Stream, UTCDateTime, read
 from PyQt6.QtCore import QRectF, Qt, QTimer, QUrl
 from PyQt6.QtGui import (
@@ -289,7 +289,7 @@ class Hypo71Dialog(QDialog):
     def open_focmec_from_loc(self):
         """Open FOCMEC dialog passing the resolved hypocenter."""
         if self.parent and hasattr(self.parent, "open_focmec_dialog"):
-            self.parent.open_focmec_dialog(hypocenter=self.results)
+            self.parent.open_focmec_dialog(hypocenter=self.results)  # ty: ignore[call-non-callable]
 
     def on_edit_model(self):
         if self.parent:
@@ -509,7 +509,7 @@ class Hypo71Dialog(QDialog):
                         hypocenter=res,
                     )
                     if self.parent:
-                        self.parent.current_event_id = ev_id
+                        self.parent.current_event_id = ev_id  # ty: ignore[invalid-assignment]
 
                 vmod_name = utils.load_velocity_model().get("name", "1D Model")
 
@@ -524,7 +524,7 @@ class Hypo71Dialog(QDialog):
                     "ERZ_km": erz,
                     "Quality_Loc": qsd,
                     "Phases_Used": res.get("phases_used", 0),
-                    "Stations_Used": len(set(r.get("station") for r in res.get("residuals", []) if r.get("station"))),
+                    "Stations_Used": len({r.get("station") for r in res.get("residuals", []) if r.get("station")}),
                     "Velocity_Model": vmod_name,
                 }
                 actual_cat_path = utils.update_seismic_catalog(cat_path, cat_event)
@@ -1325,7 +1325,7 @@ class SeismicPickerQT(QMainWindow):
             return self._theo_cache
         try:
             self._theo_cache = utils.calculate_theoretical_arrivals(self.original_stream, model_name=model_name)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.debug(f"Error calculating theoretical arrivals: {e}")
             self._theo_cache = {}
         return self._theo_cache
@@ -1467,19 +1467,20 @@ class SeismicPickerQT(QMainWindow):
             try:
                 hints = QApplication.styleHints()
                 if hasattr(Qt, "ColorScheme"):
-                    cs = hints.colorScheme()
+                    cs = hints.colorScheme()  # ty: ignore[unresolved-attribute]
                     if cs == Qt.ColorScheme.Dark:
                         is_dark = True
                     elif cs == Qt.ColorScheme.Light:
                         is_dark = False
                     else:
                         is_dark = None
-            except Exception:
+            except Exception:  # noqa: BLE001
                 is_dark = None
 
             # 2. Check freedesktop / GNOME dark theme setting via gsettings or XDG (Linux)
             if is_dark is None:
-                import os, subprocess
+                import os
+                import subprocess
                 color_scheme_env = os.environ.get("QT_STYLE_OVERRIDE", "").lower()
                 if "dark" in color_scheme_env:
                     is_dark = True
@@ -1487,18 +1488,18 @@ class SeismicPickerQT(QMainWindow):
                     try:
                         out = subprocess.run(
                             ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"],
-                            capture_output=True, text=True, timeout=0.5
+                            check=False, capture_output=True, text=True, timeout=0.5
                         )
                         if "dark" in out.stdout.lower():
                             is_dark = True
                         elif "default" in out.stdout.lower() or "light" in out.stdout.lower():
                             is_dark = False
-                    except Exception:
+                    except Exception:  # noqa: BLE001, S110
                         pass
 
             # 3. Fallback to standardPalette luminance
             if is_dark is None:
-                std_pal = app.style().standardPalette() if app else self.style().standardPalette()
+                std_pal = app.style().standardPalette() if app else self.style().standardPalette()  # ty: ignore[unresolved-attribute]
                 win_col = std_pal.color(QPalette.ColorRole.Window)
                 lum = 0.299 * win_col.red() + 0.587 * win_col.green() + 0.114 * win_col.blue()
                 is_dark = lum < 128
@@ -1521,13 +1522,13 @@ class SeismicPickerQT(QMainWindow):
                 palette.setColor(QPalette.ColorRole.Highlight, pg.mkColor("#2746ae"))
                 palette.setColor(QPalette.ColorRole.HighlightedText, pg.mkColor("#ffffff"))
                 if app:
-                    app.setPalette(palette)
+                    app.setPalette(palette)  # ty: ignore[unresolved-attribute]
                 self.setPalette(palette)
                 self.setStyleSheet("")
             else:
                 if app:
-                    app.setPalette(app.style().standardPalette())
-                self.setPalette(self.style().standardPalette())
+                    app.setPalette(app.style().standardPalette())  # ty: ignore[unresolved-attribute]
+                self.setPalette(self.style().standardPalette())  # ty: ignore[unresolved-attribute]
                 self.setStyleSheet("")
                 palette = self.palette()
                 bg_color = palette.color(QPalette.ColorRole.Window).name()
@@ -1705,7 +1706,7 @@ class SeismicPickerQT(QMainWindow):
             for p in self.plots:
                 try:
                     p.clear()
-                except Exception:
+                except Exception:  # noqa: BLE001, S110
                     pass
             self.win.clear()  # ty: ignore[unresolved-attribute]
             self.plots = []
@@ -1798,7 +1799,7 @@ class SeismicPickerQT(QMainWindow):
         for p in self.plots:
             try:
                 p.clear()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110
                 pass
         self.win.clear()  # ty: ignore[unresolved-attribute]
         self.plots = []
@@ -2035,7 +2036,7 @@ class SeismicPickerQT(QMainWindow):
                     vr = p.viewRange()
                     if len(vr) > 1 and len(vr[1]) > 1:
                         y_max = float(vr[1][1])
-                except Exception:
+                except Exception:  # noqa: BLE001
                     y_max = 1.0
             y_theo = y_max * 0.65
 
@@ -2425,7 +2426,7 @@ class SeismicPickerQT(QMainWindow):
                 for item in p.pick_items:
                     try:
                         p.removeItem(item)
-                    except Exception:
+                    except Exception:  # noqa: BLE001, S110
                         pass
                 p.pick_items = []
             sta = p.meta.get("sta")

@@ -15,7 +15,7 @@ from obspy.taup import TauPyModel
 from PyQt6.QtCore import QStandardPaths
 from PyQt6.QtGui import QIcon
 
-__version__ = "2.0.0"
+__version__ = "3.0.0"
 
 APP_CONFIG_FOLDER = "PyPicker"
 
@@ -1309,7 +1309,7 @@ def get_or_create_event_id(stream, picks=None, hypocenter=None):
         if valid_paths:
             parents = {p.parent.name for p in valid_paths}
             if len(parents) == 1:
-                parent_name = list(parents)[0]
+                parent_name = next(iter(parents))
                 if parent_name and parent_name not in (".", "/", "\\", "h71_localized"):
                     return parent_name
 
@@ -1324,7 +1324,7 @@ def get_or_create_event_id(stream, picks=None, hypocenter=None):
         if not isinstance(t_ref, UTCDateTime):
             try:
                 t_ref = UTCDateTime(t_ref)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 t_ref = None
         if t_ref:
             return f"EV_{t_ref.strftime('%Y%m%d_%H%M%S')}"
@@ -1383,7 +1383,7 @@ def update_seismic_catalog(catalog_path, event_dict):
     if new_ot_str:
         try:
             new_ot = UTCDateTime(new_ot_str)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
     match_idx = -1
@@ -1402,7 +1402,7 @@ def update_seismic_catalog(catalog_path, event_dict):
                 if abs(new_ot - r_ot) <= 30.0:
                     match_idx = i
                     break
-            except Exception:
+            except Exception:  # noqa: BLE001, S110
                 pass
 
     # Normalize incoming fields

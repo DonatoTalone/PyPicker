@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pypicker"
-version = "2.0.0"
+version = "3.0.0"
 description = "A Python desktop application for seismic waveform visualization, frequency and time-frequency analysis, and manual arrival picking"
 readme = "README.md"
 requires-python = ">=3.10"

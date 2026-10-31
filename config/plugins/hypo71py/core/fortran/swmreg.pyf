@@ -1,0 +1,43 @@
+!    -*- f90 -*-
+! Note: the context of this file is case sensitive.
+
+python module swmreg ! in
+    interface  ! in :swmreg
+        subroutine swmreg(test,iprn,nr,ksmp,fno,x,w,iskp,kf,kz,xmean,b,y,bse,af,onf,flim) ! in :swmreg:swmreg.f
+            real*4 dimension(15) :: test
+            integer :: iprn
+            integer :: nr
+            integer*4 dimension(201) :: ksmp
+            real :: fno
+            real*4 dimension(4,501) :: x
+            real*4 dimension(501) :: w
+            integer*4 dimension(4) :: iskp
+            integer :: kf
+            integer :: kz
+            real*4 dimension(4) :: xmean
+            real*4 dimension(4) :: b
+            real*4 dimension(4) :: y
+            real*4 dimension(4) :: bse
+            real*4 dimension(3) :: af
+            real :: onf
+            real intent(out) :: flim
+        end subroutine swmreg
+        subroutine answer(a,s,xmean,sigma,idx,phi,l,m,mm,pf,ndx,adx) ! in :swmreg:swmreg.f
+            real*4 dimension(7,7) :: a
+            real*4 dimension(4,4) :: s
+            real*4 dimension(4) :: xmean
+            real*4 dimension(4) :: sigma
+            integer*4 dimension(4) :: idx
+            real :: phi
+            integer :: l
+            integer :: m
+            integer :: mm
+            real*4 dimension(3) :: pf
+            integer :: ndx
+            character*8 :: adx
+        end subroutine answer
+    end interface
+end python module swmreg
+
+! This file was auto-generated with f2py (version:2).
+! See http://cens.ioc.ee/projects/f2py2e/

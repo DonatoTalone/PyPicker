@@ -1,0 +1,379 @@
+!    -*- f90 -*-
+! Note: the context of this file is case sensitive.
+
+python module hypo71 ! in 
+    interface  ! in :hypo71
+        subroutine azwtos(dx,dy,nr,wt,kdx,az,azwt,key,ins,iew,gap) ! in :hypo71:azwtos.f
+            real*4 dimension(501) :: dx
+            real*4 dimension(501) :: dy
+            integer :: nr
+            real*4 dimension(501) :: wt
+            integer*4 dimension(501) :: kdx
+            real*4 dimension(501),intent(inout) :: az
+            real*4 dimension(501),intent(inout) :: azwt
+            integer*4 dimension(501) :: key
+            character dimension(201,1),intent(c) :: ins
+            character dimension(201,1),intent(c) :: iew
+            real*4 intent(out) :: gap
+        end subroutine azwtos
+        subroutine sort(x,key,no) ! in :hypo71:azwtos.f
+            real dimension(no) :: x
+            integer dimension(no),depend(no) :: key
+            integer, optional,check(len(x)>=no),depend(x) :: no=len(x)
+        end subroutine sort
+        subroutine trvdrv(isw,v,d,depth,vsq,nl,thk,h,g,f,tid,did,flt,delta,dx,dy,elev,nr,kdx,kno,fltep,z,zsq,nv,nrp,x,t,anin) ! in :hypo71:trvdrv.f
+            character*4 :: isw
+            real*4 dimension(2,21) :: v
+            real*4 dimension(21) :: d
+            real*4 dimension(21) :: depth
+            real*4 dimension(2,21) :: vsq
+            integer :: nl
+            real*4 dimension(21) :: thk
+            real*4 dimension(21) :: h
+            real*4 dimension(2,4,21) :: g
+            real*4 dimension(21,21) :: f
+            real*4 dimension(2,21,21) :: tid
+            real*4 dimension(2,21,21) :: did
+            real*4 dimension(2,201) :: flt
+            real*4 dimension(501) :: delta
+            real*4 dimension(501) :: dx
+            real*4 dimension(501) :: dy
+            real*4 dimension(501) :: elev
+            integer :: nr
+            integer*4 dimension(501) :: kdx
+            integer :: kno
+            real :: fltep
+            real :: z
+            real :: zsq
+            integer :: nv
+            integer :: nrp
+            real*4 dimension(4,501) :: x
+            real*4 dimension(501) :: t
+            real*4 dimension(501) :: anin
+            real dimension(2,21,21) :: dxd
+            real dimension(2,21,21) :: txd
+            integer :: nlecp
+            real :: epsob
+            integer :: iflag
+            common /txcal/ dxd,txd
+            common /gradi/ nlecp
+            common /provi/ epsob,iflag
+        end subroutine trvdrv
+        subroutine refwav(nl,jf,tinf,didf,js,tins,dids,v,delta,tr,tmin,jm) ! in :hypo71:trvdrv.f
+            integer :: nl
+            integer :: jf
+            real dimension(1) :: tinf
+            real dimension(1) :: didf
+            integer :: js
+            real dimension(1) :: tins
+            real dimension(1) :: dids
+            real dimension(1) :: v
+            real :: delta
+            real dimension(1) :: tr
+            real :: tmin
+            integer :: jm
+        end subroutine refwav
+        subroutine dirwav(z,jl,tkj,zstat,js,tkjs,tins,dids,delta,tmin,ff,thk,v,vsq,dtdd,dtdh,anin,t) ! in :hypo71:trvdrv.f
+            real :: z
+            integer :: jl
+            real :: tkj
+            real :: zstat
+            integer :: js
+            real :: tkjs
+            real dimension(1) :: tins
+            real dimension(1) :: dids
+            real :: delta
+            real :: tmin
+            real :: ff
+            real dimension(1) :: thk
+            real dimension(1) :: v
+            real dimension(1) :: vsq
+            real :: dtdd
+            real :: dtdh
+            real :: anin
+            real :: t
+        end subroutine dirwav
+        subroutine prep1(nl,z,d,v,vsq,tid,did,tinj,didj,xomax,jl,tkj) ! in :hypo71:trvdrv.f
+            integer :: nl
+            real :: z
+            real*4 dimension(21) :: d
+            real*4 dimension(21) :: v
+            real*4 dimension(21) :: vsq
+            real*4 dimension(21,21) :: tid
+            real*4 dimension(21,21) :: did
+            real*4 dimension(21) :: tinj
+            real*4 dimension(21) :: didj
+            real :: xomax
+            integer :: jl
+            real :: tkj
+        end subroutine prep1
+        subroutine swmreg(test,iprn,nr,ksmp,fno,x,w,iskp,kf,kz,xmean,b,y,bse,af,onf,flim) ! in :hypo71:swmreg.f
+            real*4 dimension(15) :: test
+            integer :: iprn
+            integer :: nr
+            integer*4 dimension(201) :: ksmp
+            real :: fno
+            real*4 dimension(4,501) :: x
+            real*4 dimension(501) :: w
+            integer*4 dimension(4) :: iskp
+            integer :: kf
+            integer :: kz
+            real*4 dimension(4) :: xmean
+            real*4 dimension(4) :: b
+            real*4 dimension(4) :: y
+            real*4 dimension(4) :: bse
+            real*4 dimension(3) :: af
+            real :: onf
+            real intent(out) :: flim
+        end subroutine swmreg
+        subroutine answer(a,s,xmean,sigma,idx,phi,l,m,mm,pf,ndx,adx) ! in :hypo71:swmreg.f
+            real*4 dimension(7,7) :: a
+            real*4 dimension(4,4) :: s
+            real*4 dimension(4) :: xmean
+            real*4 dimension(4) :: sigma
+            integer*4 dimension(4) :: idx
+            real :: phi
+            integer :: l
+            integer :: m
+            integer :: mm
+            real*4 dimension(3) :: pf
+            integer :: ndx
+            character*8 :: adx
+        end subroutine answer
+        subroutine single(ns,iw,nsta,lat,lon,ins,iew,elev,mno,dly,flt,jdx,nl,v,d,kdate,khr,nr,kdx,ldx,jmin,prmk,w,p,nrp,srmk,ws,s,dt,wrk,ksmp,nres,sr,srsq,srwt,qno,org1,org2,lat1,lat2,lon1,lon2,ztr,test,isw,kno,inst,knst,pos,xnear,xfar,kaz,ktest,singmd,iprn,latep,lonep,z,org,se,rms,qsd,x,delta,az,ain,wt,azwt,ni) ! in :hypo71:single.f
+            integer*4 :: ns
+            character dimension(201,1),intent(c) :: iw
+            character dimension(201,4),intent(c) :: nsta
+            real*4 dimension(201) :: lat
+            real*4 dimension(201) :: lon
+            character dimension(201,1),intent(c) :: ins
+            character dimension(201,1),intent(c) :: iew
+            real*4 dimension(501) :: elev
+            integer*4 dimension(201) :: mno
+            real*4 dimension(2,201) :: dly
+            real*4 dimension(2,201) :: flt
+            integer*4 dimension(201) :: jdx
+            integer*4 :: nl
+            real*4 dimension(2,21) :: v
+            real*4 dimension(21) :: d
+            integer*4 :: kdate
+            integer*4 :: khr
+            integer*4 :: nr
+            integer*4 dimension(501) :: kdx
+            integer*4 dimension(501) :: ldx
+            integer*4 dimension(501) :: jmin
+            character dimension(501,4),intent(c) :: prmk
+            real*4 dimension(501) :: w
+            real*4 dimension(501) :: p
+            integer :: nrp
+            character dimension(501,4),intent(c) :: srmk
+            real*4 dimension(501) :: ws
+            real*4 dimension(501) :: s
+            real*4 dimension(501) :: dt
+            character dimension(501,4),intent(c) :: wrk
+            integer*4 dimension(201) :: ksmp
+            integer*4 dimension(2,201) :: nres
+            real*4 dimension(2,201) :: sr
+            real*4 dimension(2,201) :: srsq
+            real*4 dimension(2,201) :: srwt
+            real*4 dimension(4) :: qno
+            real*4 :: org1
+            real*4 :: org2
+            real*4 :: lat1
+            real*4 :: lat2
+            real*4 :: lon1
+            real*4 :: lon2
+            real*4 :: ztr
+            real*4 dimension(20) :: test
+            character*4 :: isw
+            integer :: kno
+            integer*4 :: inst
+            integer*4 :: knst
+            real*4 :: pos
+            real*4 :: xnear
+            real*4 :: xfar
+            integer*4 :: kaz
+            integer*4 :: ktest
+            integer*4 :: singmd
+            integer*4 :: iprn
+            real*4 intent(out) :: latep
+            real*4 intent(out) :: lonep
+            real intent(out) :: z
+            real*4 intent(out) :: org
+            real*4 dimension(4),intent(inout) :: se
+            real intent(out) :: rms
+            character dimension(2,1),intent(out) :: qsd
+            real*4 dimension(4,501),intent(inout) :: x
+            real*4 dimension(501),intent(inout) :: delta
+            real*4 dimension(501),intent(inout) :: az
+            real*4 dimension(501),intent(inout) :: ain
+            real*4 dimension(501),intent(inout) :: wt
+            real*4 dimension(501),intent(inout) :: azwt
+            integer*4 intent(out) :: ni
+            integer :: iq
+            integer :: kms
+            integer :: kfm
+            integer :: ipun
+            integer :: imag
+            integer :: ir
+            integer :: kpaper
+            integer*4 :: ksort
+            integer :: ksel
+            real*4 :: latr
+            real*4 :: lonr
+            real :: onf
+            real :: flim
+            character*48 :: ahead
+            character*4 :: ipro
+            integer*4 :: near
+            integer :: iexit
+            integer :: idxs
+            integer :: iph
+            integer :: jph
+            integer :: ndec
+            integer :: jmax
+            integer :: jav
+            integer :: kf
+            integer :: kp
+            integer :: kz
+            integer :: kkf
+            real :: avrps
+            real :: dmin
+            real*4 :: rmssq
+            real :: adjsq
+            real :: zsq
+            real :: avr
+            real :: aar
+            character*80 :: sucard
+            character*1 :: qs
+            character*1 :: qd
+            common /c1/ iq,kms,kfm,ipun,imag,ir,kpaper,ksort,ksel
+            common /c2/ latr,lonr,onf,flim
+            common /c3/ ahead,ipro
+            common /c4/ near,iexit,idxs
+            common /o1/ iph,jph,ndec,jmax,jav,kf,kp,kz,kkf
+            common /o2/ avrps,dmin,rmssq,adjsq,zsq,avr,aar
+            common /o3/ sucard
+            common /o5/ qs,qd
+        end subroutine single
+        subroutine output(test,inst,knst,kno,iw,ins,iew,dly,fmgc,xmgc,klas,prr,calr,ical,flt,qspa,nsta,kdate,khr,nr,nrp,ns,prmk,jmin,p,s,srmk,amx,prx,calx,rmk,dt,fmp,azres,qrmk,kdx,ldx,wt,tp,t,wrk,ksmp,ts,time1,time2,delta,dx,dy,avxm,xmag,avfm,fmag,mag,fno,x,b,y,se,af,az,ain,anin,temp,key,latep,lonep,z,org,ni) ! in :hypo71:single.f
+            real*4 dimension(20) :: test
+            integer :: inst
+            integer :: knst
+            integer :: kno
+            character dimension(201,1),intent(c) :: iw
+            character dimension(201,1),intent(c) :: ins
+            character dimension(201,1),intent(c) :: iew
+            real*4 dimension(2,201) :: dly
+            real*4 dimension(201) :: fmgc
+            real*4 dimension(201) :: xmgc
+            integer*4 dimension(201) :: klas
+            real*4 dimension(201) :: prr
+            real*4 dimension(201) :: calr
+            integer*4 dimension(201) :: ical
+            real*4 dimension(2,201) :: flt
+            real*4 dimension(9,40) :: qspa
+            character dimension(201,4),intent(c) :: nsta
+            integer :: kdate
+            integer :: khr
+            integer :: nr
+            integer :: nrp
+            integer :: ns
+            character dimension(501,4),intent(c) :: prmk
+            integer*4 dimension(501) :: jmin
+            real*4 dimension(501) :: p
+            real*4 dimension(501) :: s
+            character dimension(501,4),intent(c) :: srmk
+            real*4 dimension(501) :: amx
+            real*4 dimension(501) :: prx
+            real*4 dimension(501) :: calx
+            character dimension(501,3),intent(c) :: rmk
+            real*4 dimension(501) :: dt
+            real*4 dimension(501) :: fmp
+            character dimension(501,4),intent(c) :: azres
+            character dimension(501,1),intent(c) :: qrmk
+            integer*4 dimension(501) :: kdx
+            integer*4 dimension(501) :: ldx
+            real*4 dimension(501) :: wt
+            real*4 dimension(501) :: tp
+            real*4 dimension(501) :: t
+            character dimension(501,4),intent(c) :: wrk
+            integer*4 dimension(201) :: ksmp
+            real*4 dimension(501) :: ts
+            real*8 :: time1
+            real*8 :: time2
+            real*4 dimension(501) :: delta
+            real*4 dimension(501) :: dx
+            real*4 dimension(501) :: dy
+            real :: avxm
+            real*4 dimension(501) :: xmag
+            real :: avfm
+            real*4 dimension(501) :: fmag
+            real :: mag
+            real :: fno
+            real*4 dimension(4,501) :: x
+            real*4 dimension(4) :: b
+            real*4 dimension(4) :: y
+            real*4 dimension(4) :: se
+            real*4 dimension(3) :: af
+            real*4 dimension(501) :: az
+            real*4 dimension(501) :: ain
+            real*4 dimension(501) :: anin
+            real*4 dimension(501) :: temp
+            integer*4 dimension(501) :: key
+            real :: latep
+            real :: lonep
+            real :: z
+            real :: org
+            integer :: iq
+            integer :: kms
+            integer :: kfm
+            integer :: ipun
+            integer :: imag
+            integer :: ir
+            integer :: kpaper
+            integer :: ksort
+            integer :: ksel
+            real :: latr
+            real :: lonr
+            real :: onf
+            real :: flim
+            character*48 :: ahead
+            character*4 :: ipro
+            integer :: near
+            integer :: iexit
+            integer :: idxs
+            integer :: ni
+            integer :: iph
+            integer :: jph
+            integer :: ndec
+            integer :: jmax
+            integer :: jav
+            integer :: kf
+            integer :: kp
+            integer :: kz
+            integer :: kkf
+            real :: avrps
+            real :: dmin
+            real :: rmssq
+            real :: adjsq
+            real :: zsq
+            real :: avr
+            real :: aar
+            character*80 :: sucard
+            character*1 :: qs
+            character*1 :: qd
+            common /c1/ iq,kms,kfm,ipun,imag,ir,kpaper,ksort,ksel
+            common /c2/ latr,lonr,onf,flim
+            common /c3/ ahead,ipro
+            common /c4/ near,iexit,idxs
+            common /o1/ iph,jph,ndec,jmax,jav,kf,kp,kz,kkf
+            common /o2/ avrps,dmin,rmssq,adjsq,zsq,avr,aar
+            common /o3/ sucard
+            common /o5/ qs,qd
+        end subroutine output
+    end interface 
+end python module hypo71
+
+! This file was auto-generated with f2py (version:2).
+! See http://cens.ioc.ee/projects/f2py2e/

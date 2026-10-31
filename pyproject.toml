@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pypicker"
+version = "2.0.0"
+description = "A Python desktop application for seismic waveform visualization, frequency and time-frequency analysis, and manual arrival picking"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "GPL-3.0-only"}
+authors = [
+    {name = "Donato Talone"},
+    {name = "Giorgia Lelj"}
+]
+keywords = ["seismology", "geophysics", "picker", "waveform", "obspy", "pyqt6"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+dependencies = [
+    "obspy>=1.4.0",
+    "PyQt6>=6.5.0",
+    "pyqtgraph>=0.13.0",
+    "numpy>=1.22.0",
+    "scipy>=1.9.0",
+    "matplotlib>=3.5.0",
+    "pandas>=2.0.0",
+    "cartopy>=0.23.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/DonatoTalone/PyPicker"
+Repository = "https://github.com/DonatoTalone/PyPicker"
+Issues = "https://github.com/DonatoTalone/PyPicker/issues"
+DOI = "https://doi.org/10.5281/zenodo.21976300"
+
+[project.scripts]
+pypicker = "seismic_picker_qt:main"
+
+[tool.setuptools]
+py-modules = ["seismic_picker_qt", "picker_utils_qt"]
+packages = {find = {where = ["."], include = ["config*", "doc*"]}}
+
+[tool.setuptools.package-data]
+"*" = ["picker_utils_qt.py"]
+"config" = ["*"]
+"config.plugins" = ["*"]
+"config.plugins.hypo71py" = ["*"]
+"config.plugins.hypo71py.core" = ["*"]
+"config.plugins.hypo71py.interface" = ["*"]
+"config.plugins.hypo71py.model" = ["*"]
+"doc" = ["*.md", "images/*", "icon/*"]

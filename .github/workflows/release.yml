@@ -62,18 +62,7 @@ jobs:
           cp doc/icon/PyPicker_icon_dark.svg pkg_dir/usr/share/icons/hicolor/scalable/apps/pypicker.svg
           cp doc/icon/PyPicker_icon_dark.png pkg_dir/usr/share/icons/hicolor/256x256/apps/pypicker.png
 
-          cat << 'EOF' > pkg_dir/usr/share/applications/pypicker.desktop
-[Desktop Entry]
-Name=PyPicker
-Comment=Seismic Waveform Picker & Analyzer
-Exec=pypicker
-Icon=pypicker
-Terminal=false
-Type=Application
-Categories=Science;Geoscience;Education;
-StartupNotify=true
-StartupWMClass=PyPicker
-EOF
+          printf '[Desktop Entry]\nName=PyPicker\nComment=Seismic Waveform Picker & Analyzer\nExec=pypicker\nIcon=pypicker\nTerminal=false\nType=Application\nCategories=Science;Geoscience;Education;\nStartupNotify=true\nStartupWMClass=PyPicker\n' > pkg_dir/usr/share/applications/pypicker.desktop
 
           # 1. Generic ZIP
           cd dist

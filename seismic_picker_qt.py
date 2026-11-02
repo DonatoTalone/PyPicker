@@ -1,5 +1,4 @@
-from numpy.ma import left_shift
-import logging
+import logging  # noqa: EXE002
 import re
 import sys
 from pathlib import Path
@@ -45,8 +44,8 @@ if getattr(sys, "frozen", False):
                         return cand
             return filename
 
-        _safe_getfile._is_obspy_patched = True
-        inspect.getfile = _safe_getfile
+        _safe_getfile._is_obspy_patched = True  # ty: ignore[unresolved-attribute]
+        inspect.getfile = _safe_getfile  # ty: ignore[invalid-assignment]
 
 # Ensure obspy.imaging.cm has viridis colormaps registered
 try:
@@ -59,7 +58,7 @@ try:
         obspy_cm.__dict__["obspy_sequential_r"] = colormaps["viridis"].reversed()
         if "pqlx" not in obspy_cm.__dict__ and "gist_rainbow" in colormaps:
             obspy_cm.__dict__["pqlx"] = colormaps["gist_rainbow"]
-except Exception:
+except Exception:  # noqa: BLE001, S110
     pass
 
 logger = logging.getLogger(__name__)
@@ -1324,10 +1323,10 @@ class SeismicPickerQT(QMainWindow):
         self.theme_sel.currentTextChanged.connect(self.apply_theme)
         try:
             hints = QApplication.styleHints()
-            hints.colorSchemeChanged.connect(
+            hints.colorSchemeChanged.connect(  # ty: ignore[unresolved-attribute]
                 lambda _: self.apply_theme("System") if self.theme_sel.currentText() == "System" else None
             )
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110
             pass
 
         self.win.scene().sigMouseMoved.connect(self.on_mouse_move)  # ty: ignore[unresolved-attribute]
@@ -1515,7 +1514,7 @@ class SeismicPickerQT(QMainWindow):
                             is_dark = True
                         elif cs == Qt.ColorScheme.Light:
                             is_dark = False
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: BLE001, S110
                     pass
 
             # 2. Fallback to standardPalette luminance

@@ -7,26 +7,21 @@ Features:
 - Full background station inventory from configured FDSN client (default INGV).
 - Distinct highlighting and labeling for active stations currently open in PyPicker.
 - Epicenter marker displayed dynamically when event coordinates are present
-  or computed via Hypo71 localization.
+    or computed via Hypo71 localization.
 - Pan and zoom navigation via standard Qt navigation toolbar and mouse wheel.
-"""
+"""  # noqa: EXE002
 
 import logging
-from pathlib import Path
-import urllib.request
 
 import matplotlib
-matplotlib.use("QtAgg")
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
-import numpy as np
 
+matplotlib.use("QtAgg")
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import cartopy.io.img_tiles as cimgt
-
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QAction, QFont, QIcon
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -35,10 +30,8 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPushButton,
     QSlider,
-    QSpinBox,
     QStatusBar,
     QVBoxLayout,
-    QWidget,
 )
 
 try:
@@ -90,7 +83,7 @@ class MapDialog(QDialog):
         try:
             tile_cache.mkdir(parents=True, exist_ok=True)
             self.tile_provider = EsriShadedRelief(cache=tile_cache)
-        except Exception:
+        except Exception:  # noqa: BLE001
             self.tile_provider = EsriShadedRelief()
 
         self._init_ui()
@@ -159,11 +152,21 @@ class MapDialog(QDialog):
 
         ctrl_bar.addStretch()
 
-        # Center on active stations
-        self.btn_center = QPushButton("Fit Extent")
-        self.btn_center.setToolTip("Reset extent to focus on active stations and event")
-        self.btn_center.clicked.connect(lambda: self.refresh_map(initial=True))
-        ctrl_bar.addWidget(self.btn_center)
+        # Recalculate map layer resolution while preserving the current extent
+        self.btn_fit_extent = QPushButton("Fit Extent")
+        self.btn_fit_extent.setToolTip(
+            "Rescale map layers and DEM detail to the current map extent"
+        )
+        self.btn_fit_extent.clicked.connect(lambda: self.refresh_map(initial=False))
+        ctrl_bar.addWidget(self.btn_fit_extent)
+
+        # Restore the initial extent around active stations and the event
+        self.btn_reset_zoom = QPushButton("Reset Zoom")
+        self.btn_reset_zoom.setToolTip(
+            "Reset the map extent to focus on active stations and event"
+        )
+        self.btn_reset_zoom.clicked.connect(lambda: self.refresh_map(initial=True))
+        ctrl_bar.addWidget(self.btn_reset_zoom)
 
         layout.addLayout(ctrl_bar)
 
@@ -191,7 +194,7 @@ class MapDialog(QDialog):
             self.station_index = utils.build_station_index(self.inventory)
             total = len(self.station_index)
             self.status_bar.showMessage(f"Client '{self.client_name}': {total} stations available.", 4000)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning(f"Failed to load station inventory: {e}")
             self.inventory = None
             self.station_index = {}
@@ -326,7 +329,7 @@ class MapDialog(QDialog):
         if not initial and hasattr(self, "ax") and self.ax is not None:
             try:
                 prev_extent = self.ax.get_extent(crs=ccrs.PlateCarree())
-            except Exception:
+            except Exception:  # noqa: BLE001
                 prev_extent = None
 
         self.fig.clear()
@@ -379,11 +382,11 @@ class MapDialog(QDialog):
                     zoom = 11
 
                 self.ax.add_image(self.tile_provider, zoom, alpha=self.dem_alpha)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.debug(f"Tile provider unavailable ({e}), using Natural Earth stock image.")
                 try:
                     self.ax.stock_img()
-                except Exception:
+                except Exception:  # noqa: BLE001, S110
                     pass
 
         # Layer 2: Vector geographic features
@@ -414,7 +417,7 @@ class MapDialog(QDialog):
                 linewidth=0.9,
                 zorder=3,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning(f"Error drawing natural earth features: {e}")
 
         # Layer 3: Gridlines
@@ -428,7 +431,7 @@ class MapDialog(QDialog):
             )
             gl.top_labels = False
             gl.right_labels = False
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
         # Layer 4: Background FDSN Client Stations
@@ -485,20 +488,22 @@ class MapDialog(QDialog):
                         fontweight="bold",
                         color="#1a252f",
                         transform=ccrs.PlateCarree(),
-                        bbox=dict(
-                            boxstyle="round,pad=0.2",
-                            facecolor="white",
-                            alpha=0.85,
-                            edgecolor="#bdc3c7",
-                            linewidth=0.5,
-                        ),
+                        bbox={
+                            "boxstyle": "round,pad=0.2",
+                            "facecolor": "white",
+                            "alpha": 0.85,
+                            "edgecolor": "#bdc3c7",
+                            "linewidth": 0.5,
+                        },
                         zorder=6,
+                        clip_on=True,
+                        annotation_clip=True,
                     )
 
         # Layer 6: Earthquake Epicenter (if present / localized)
         status_event = "No Event Coordinates"
         if event_info:
-            evla, evlo, depth_km, ot = event_info
+            evla, evlo, depth_km, _ = event_info
             depth_str = f", Depth: {depth_km:.1f} km" if depth_km is not None else ""
             status_event = f"Epicenter: Lat {evla:.3f}°, Lon {evlo:.3f}°{depth_str}"
 
@@ -529,14 +534,16 @@ class MapDialog(QDialog):
                 fontweight="bold",
                 color="#962d00",
                 transform=ccrs.PlateCarree(),
-                bbox=dict(
-                    boxstyle="round,pad=0.25",
-                    facecolor="#fff9e6",
-                    alpha=0.9,
-                    edgecolor="#e67e22",
-                    linewidth=0.8,
-                ),
+                bbox={
+                    "boxstyle": "round,pad=0.25",
+                    "facecolor": "#fff9e6",
+                    "alpha": 0.9,
+                    "edgecolor": "#e67e22",
+                    "linewidth": 0.8,
+                },
                 zorder=8,
+                clip_on=True,
+                annotation_clip=True,
             )
 
             # Layer 7: Focal Mechanism Beachball (if computed)
@@ -562,16 +569,16 @@ class MapDialog(QDialog):
                         zorder=9,
                     )
                     self.ax.add_collection(bb)
-                except Exception as fm_err:
+                except Exception as fm_err:  # noqa: BLE001
                     logger.warning(f"Failed to plot focal mechanism on map: {fm_err}")
 
         self.ax.legend(loc="upper right", framealpha=0.9, fontsize=8.5)
         try:
             self.canvas.draw()
-        except Exception:
+        except Exception:  # noqa: BLE001
             try:
                 self.canvas.draw_idle()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110
                 pass
 
         # Update status bar
@@ -580,9 +587,9 @@ class MapDialog(QDialog):
             f"Active: {len(active_stations)} stations | {status_event}"
         )
 
-    def closeEvent(self, event):
+    def closeEvent(self, event):  # ty: ignore[invalid-method-override]
         try:
             plt.close(self.fig)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
         super().closeEvent(event)

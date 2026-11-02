@@ -1,4 +1,4 @@
-import csv
+import csv  # noqa: EXE002
 import json
 import os
 import shutil
@@ -165,7 +165,7 @@ def detect_system_dark_mode():
         detected = darkdetect.theme()
         if detected:
             return detected.lower() == "dark"
-    except Exception:
+    except Exception:  # noqa: BLE001, S110
         pass
 
     # 2. Linux
@@ -195,7 +195,7 @@ def detect_system_dark_mode():
                     return True
                 elif "uint32 2" in val:
                     return False
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
         # b) GNOME / XDG gsettings
@@ -212,7 +212,7 @@ def detect_system_dark_mode():
                 return True
             elif "light" in res.stdout.lower():
                 return False
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
         try:
@@ -226,7 +226,7 @@ def detect_system_dark_mode():
             )
             if "-dark" in res.stdout.lower():
                 return True
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
         # c) KDE Plasma kdeglobals
@@ -240,7 +240,7 @@ def detect_system_dark_mode():
                             return True
                         elif "light" in line.lower():
                             return False
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
         # d) Desktop Environment Variables
@@ -262,11 +262,8 @@ def detect_system_dark_mode():
                 text=True,
                 timeout=0.5,
             )
-            if "dark" in res.stdout.lower():
-                return True
-            else:
-                return False
-        except Exception:
+            return "dark" in res.stdout.lower()
+        except Exception:  # noqa: BLE001
             return False
 
     # 4. Windows
@@ -280,7 +277,7 @@ def detect_system_dark_mode():
             val, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
             winreg.CloseKey(key)
             return val == 0
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
     return None
@@ -291,6 +288,7 @@ def open_path_in_system(target_path):
     Ensures directory exists and provides multi-tier fallbacks (QDesktopServices, xdg-open, os.startfile, open).
     """
     import subprocess
+
     from PyQt6.QtCore import QUrl
     from PyQt6.QtGui import QDesktopServices
 
@@ -315,7 +313,7 @@ def open_path_in_system(target_path):
         else:
             subprocess.Popen(["xdg-open", str(path)])
             return True
-    except Exception:
+    except Exception:  # noqa: BLE001
         return False
 
 def get_system_desktop_dir():
@@ -1476,7 +1474,7 @@ def get_default_catalog_path(cfg=None):
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(legacy_path, target)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
     return target

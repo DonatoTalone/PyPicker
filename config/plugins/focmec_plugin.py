@@ -418,17 +418,29 @@ class FocmecDialog(QDialog):
         self.canvas.draw()
 
     def _on_polarity_changed(self, row, combo_idx):
-        """Update polarity when user edits the table combo box."""
+        """Update polarity when user edits the table combo box and sync to session picks."""
         if 0 <= row < len(self.station_data):
+            sta = self.station_data[row]["station"]
             if combo_idx == 0:
                 self.station_data[row]["polarity"] = "+"
                 self.station_data[row]["polarity_val"] = 1
+                pol_str = "positive"
             elif combo_idx == 1:
                 self.station_data[row]["polarity"] = "-"
                 self.station_data[row]["polarity_val"] = -1
+                pol_str = "negative"
             else:
                 self.station_data[row]["polarity"] = "?"
                 self.station_data[row]["polarity_val"] = 0
+                pol_str = "undecidable"
+
+            # Sync back to parent session picks
+            if hasattr(self, "parent") and self.parent and hasattr(self.parent, "picks"):
+                for pk in self.parent.picks:
+                    if pk.get("sta") == sta and pk.get("phase", "").upper().startswith("P"):
+                        pk["polarity"] = pol_str
+                if hasattr(self.parent, "update_table"):
+                    self.parent.update_table()
 
     def run_inversion(self):
         """Execute FOCMEC grid-search solver."""

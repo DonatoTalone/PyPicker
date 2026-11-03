@@ -1013,8 +1013,10 @@ class SeismicPickerQT(QMainWindow):
         act_open.triggered.connect(self.open_files)  # ty: ignore[unresolved-attribute]
         act_save_sac = file_menu.addAction("&Save SAC...")  # ty: ignore[unresolved-attribute]
         act_save_sac.triggered.connect(self.save_to_sac)  # ty: ignore[unresolved-attribute]
-        act_export_csv = file_menu.addAction("&Export Picks (CSV)...")  # ty: ignore[unresolved-attribute]
-        act_export_csv.triggered.connect(self.export_picks)  # ty: ignore[unresolved-attribute]
+        act_import_picks = file_menu.addAction("&Import Picks...")  # ty: ignore[unresolved-attribute]
+        act_import_picks.triggered.connect(self.import_picks)  # ty: ignore[unresolved-attribute]
+        act_export_picks = file_menu.addAction("&Export Picks...")  # ty: ignore[unresolved-attribute]
+        act_export_picks.triggered.connect(self.export_picks)  # ty: ignore[unresolved-attribute]
         file_menu.addSeparator()  # ty: ignore[unresolved-attribute]
         act_exit = file_menu.addAction("E&xit")  # ty: ignore[unresolved-attribute]
         act_exit.triggered.connect(self.close)  # ty: ignore[unresolved-attribute]
@@ -1428,6 +1430,8 @@ class SeismicPickerQT(QMainWindow):
             "reset_view": self.reset_view,
             "save_sac": self.save_to_sac,
             "export_csv": self.export_picks,
+            "export_picks": self.export_picks,
+            "import_picks": self.import_picks,
             "toggle_filter": self.toggle_filter,
             "pick_p": lambda: self.start_pick_from_shortcut("P"),
             "pick_s": lambda: self.start_pick_from_shortcut("S"),
@@ -1593,6 +1597,8 @@ class SeismicPickerQT(QMainWindow):
             "reset_view": "Reset Zoom",
             "save_sac": "Save SAC",
             "export_csv": "Export Picks",
+            "export_picks": "Export Picks",
+            "import_picks": "Import Picks",
             "localize": "Hypo71 Location",
             "focmec": "Focal Mechanism (FOCMEC)",
             "open_map": "Geographic Map",
@@ -1644,7 +1650,7 @@ class SeismicPickerQT(QMainWindow):
             self,
             "Select Waveforms",
             "",
-            "Waveforms (*.sac *.mseed *.dat);;All Files (*)",)
+            "Waveforms (*.sac *.mseed *.miniseed *.dat);;All Files (*)",)
         if files:
             new_st = Stream()
             for f in files:
@@ -2368,6 +2374,8 @@ class SeismicPickerQT(QMainWindow):
         
         self.table.setRowCount(len(self.picks))
         for i, pk in enumerate(self.picks):
+            pol_val = utils.normalize_polarity(pk.get("polarity", "undecidable"))
+            onset_val = utils.normalize_onset(pk.get("onset", "Unknown"))
             items = [
                 QTableWidgetItem(pk["sta"]),
                 QTableWidgetItem(pk["cha_source"]),
@@ -2375,8 +2383,8 @@ class SeismicPickerQT(QMainWindow):
                 QTableWidgetItem(pk["abs_t"].split('T')[0]),
                 QTableWidgetItem(pk["abs_t"].split("T")[-1][:-1]),
                 QTableWidgetItem(str(pk.get("uncertainty", 0.0))),
-                QTableWidgetItem(pk.get("polarity", "Unknown")),
-                QTableWidgetItem(pk.get("onset", "Unknown"))
+                QTableWidgetItem(pol_val),
+                QTableWidgetItem(onset_val)
             ]
             
             for col, item in enumerate(items):
@@ -2389,49 +2397,70 @@ class SeismicPickerQT(QMainWindow):
 
             cb_pol = QComboBox()
             cb_pol.addItems(["undecidable", "positive", "negative"])
-            cur_pol = pk.get("polarity", "undecidable")
-            if cur_pol in ["undecidable", "positive", "negative"]:
-                cb_pol.setCurrentText(cur_pol)
-            else:
-                cb_pol.setCurrentIndex(0)
+            cb_pol.setCurrentText(pol_val)
             cb_pol.currentTextChanged.connect(
-                lambda val, idx=i, row_idx=i: self._on_table_polarity_changed(idx, row_idx, val)
+                lambda val, p=pk, row_idx=i: self._on_pick_polarity_changed(p, row_idx, val)
             )
             self.table.setCellWidget(i, 6, cb_pol)
 
             cb_onset = QComboBox()
             cb_onset.addItems(["Unknown", "Emergent", "Impulsive"])
-            cur_onset = pk.get("onset", "Unknown")
-            if cur_onset in ["Unknown", "Emergent", "Impulsive"]:
-                cb_onset.setCurrentText(cur_onset)
-            else:
-                cb_onset.setCurrentIndex(0)
+            cb_onset.setCurrentText(onset_val)
             cb_onset.currentTextChanged.connect(
-                lambda val, idx=i, row_idx=i: self._on_table_onset_changed(idx, row_idx, val)
+                lambda val, p=pk, row_idx=i: self._on_pick_onset_changed(p, row_idx, val)
             )
             self.table.setCellWidget(i, 7, cb_onset)
 
             btn = QPushButton("Remove")
             btn.setStyleSheet("background-color: #a2292b; color: white;")
-            btn.clicked.connect(lambda _, idx=i: self.delete_pick(idx))
+            btn.clicked.connect(lambda _, p=pk: self.delete_pick_by_ref(p))
             self.table.setCellWidget(i, 8, btn)
             
         self.table.blockSignals(False)
         self.table.setSortingEnabled(True)
 
+    def _on_pick_polarity_changed(self, pk, row, val):
+        norm_val = utils.normalize_polarity(val)
+        pk["polarity"] = norm_val
+        item = self.table.item(row, 6)
+        if item:
+            item.setText(norm_val)
+
     def _on_table_polarity_changed(self, pk_idx, row, val):
         if 0 <= pk_idx < len(self.picks):
-            self.picks[pk_idx]["polarity"] = val
+            norm_val = utils.normalize_polarity(val)
+            self.picks[pk_idx]["polarity"] = norm_val
             item = self.table.item(row, 6)
             if item:
-                item.setText(val)
+                item.setText(norm_val)
+
+    def _on_pick_onset_changed(self, pk, row, val):
+        norm_val = utils.normalize_onset(val)
+        pk["onset"] = norm_val
+        item = self.table.item(row, 7)
+        if item:
+            item.setText(norm_val)
 
     def _on_table_onset_changed(self, pk_idx, row, val):
         if 0 <= pk_idx < len(self.picks):
-            self.picks[pk_idx]["onset"] = val
+            norm_val = utils.normalize_onset(val)
+            self.picks[pk_idx]["onset"] = norm_val
             item = self.table.item(row, 7)
             if item:
-                item.setText(val)
+                item.setText(norm_val)
+
+    def delete_pick_by_ref(self, pk):
+        if pk in self.picks:
+            self.picks.remove(pk)
+            if hasattr(self, "original_stream") and self.original_stream:
+                utils.remove_pick_from_sac(
+                    self.original_stream, 
+                    pk["sta"], 
+                    pk["cha_source"], 
+                    pk["phase"]
+                )
+            self.update_table()
+            self.update_pick_overlays()
 
     def delete_pick(self, idx):
         if 0 <= idx < len(self.picks):
@@ -2508,9 +2537,9 @@ class SeismicPickerQT(QMainWindow):
                 new_unc = abs(float(new_text))
                 pk["uncertainty"] = round(new_unc, 4)
             elif col == 6:    # Colonna 6: Polarità (Polarity)
-                pk["polarity"] = new_text
+                pk["polarity"] = utils.normalize_polarity(new_text)
             elif col == 7:    # Colonna 7: Onset
-                pk["onset"] = new_text
+                pk["onset"] = utils.normalize_onset(new_text)
 
             self.update_pick_overlays()
         except Exception as e:  # noqa: BLE001
@@ -2563,42 +2592,91 @@ class SeismicPickerQT(QMainWindow):
         self.update_plots(reset_zoom=True)
 
     def import_picks(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Import Picks", "", "QuakeML (*.qml *.xml);;CSV Files (*.csv);;Seisgram2k pick (*.pick)"
+        filters = (
+            "All Supported Formats (*.qml *.xml *.csv *.pick *.obs *.nll *.hyp *.pha *.h71 *.dat);;"
+            "CSV Files (*.csv);;"
+            "QuakeML / ObsPy XML (*.qml *.xml);;"
+            "SeisGram2K (*.pick);;"
+            "NonLinLoc Phase (*.obs *.nll *.hyp *.dat);;"
+            "HYPO71 / HYPOELLIPSE (*.pha *.h71 *.dat);;"
+            "All Files (*)"
+        )
+        path, filt = QFileDialog.getOpenFileName(
+            self, "Import Picks", "", filters
         )
         if path:
             try:
-                if path.endswith('.csv'):
-                    new_picks = utils.extract_picks_from_csv(path)
-                elif path.endswith('.pick'):
-                    new_picks = utils.extract_picks_from_seisgram_pick(path)
-                elif path.endswith(('.qml', '.xml')):
-                    new_picks = utils.extract_picks_from_quakeml(path)
-                else:
-                    QMessageBox.critical(self, "Error", "Unsupported picking format")
-                self.picks.extend(new_picks)
+                new_picks = utils.load_picks_from_file(path, format_hint=filt)
+                if not new_picks:
+                    QMessageBox.warning(self, "Import Picks", "No picks could be extracted from the selected file.")
+                    return
+                # Deduplicate: avoid adding identical pick (sta, phase, abs_t)
+                existing = {(p.get("sta"), p.get("phase"), p.get("abs_t")) for p in self.picks}
+                added = 0
+                for npk in new_picks:
+                    key = (npk.get("sta"), npk.get("phase"), npk.get("abs_t"))
+                    if key not in existing:
+                        self.picks.append(npk)
+                        existing.add(key)
+                        added += 1
                 self.update_table()
                 self.update_pick_overlays()
-                QMessageBox.information(self, "Done", "Picks imported.")
+                skipped = len(new_picks) - added
+                if skipped > 0:
+                    QMessageBox.information(
+                        self, "Done", f"Imported {added} picks ({skipped} duplicate(s) skipped)."
+                    )
+                else:
+                    QMessageBox.information(self, "Done", f"Successfully imported {added} picks.")
             except Exception as e:  # noqa: BLE001
                 QMessageBox.critical(self, "Error", f"Could not import picks: {e}")
 
     def export_picks(self):
         if not self.picks:
+            QMessageBox.information(self, "Export Picks", "No picks to export.")
             return
+        filters = (
+            "CSV Files (*.csv);;"
+            "QuakeML / ObsPy XML (*.qml);;"
+            "SeisGram2K (*.pick);;"
+            "NonLinLoc Phase (*.obs);;"
+            "HYPO71 / HYPOELLIPSE (*.pha);;"
+            "All Files (*)"
+        )
         path, filt = QFileDialog.getSaveFileName(
-            self, "Export Picks", "picks", "QuakeML (*.qml);;QuakeML (*.xml);;CSV Files (*.csv)"
+            self, "Export Picks", "picks", filters
         )
         if path:
             try:
-                if path.endswith('.csv') or "CSV" in filt:
-                    if not path.endswith('.csv'): path += ".csv"
+                path_lower = path.lower()
+                filt_lower = filt.lower() if filt else ""
+
+                if "csv" in filt_lower or path_lower.endswith(".csv"):
+                    if not path_lower.endswith(".csv"):
+                        path += ".csv"
                     utils.export_to_csv(self.picks, path)
-                else:
-                    if not path.endswith('.qml') and not path.endswith('.xml'): 
-                        path += ".qml" if "qml" in filt else ".xml"
+                elif "seisgram" in filt_lower or path_lower.endswith(".pick"):
+                    if not path_lower.endswith(".pick"):
+                        path += ".pick"
+                    utils.export_to_seisgram_pick(self.picks, path)
+                elif "nonlinloc" in filt_lower or path_lower.endswith((".obs", ".nll")):
+                    if not any(path_lower.endswith(ext) for ext in (".obs", ".nll", ".hyp", ".dat")):
+                        path += ".obs"
+                    utils.export_to_nlloc(self.picks, path)
+                elif "hypo71" in filt_lower or "hypoellipse" in filt_lower or path_lower.endswith((".pha", ".h71")):
+                    if not any(path_lower.endswith(ext) for ext in (".pha", ".h71", ".dat")):
+                        path += ".pha"
+                    utils.export_to_hypo71(self.picks, path)
+                elif "quakeml" in filt_lower or path_lower.endswith((".qml", ".xml")):
+                    if not (path_lower.endswith(".qml") or path_lower.endswith(".xml")):
+                        path += ".qml"
                     utils.export_to_quakeml(self.picks, path)
-                QMessageBox.information(self, "Done", "Picks Exported.")
+                else:
+                    if not Path(path).suffix:
+                        path += ".csv"
+                    utils.export_to_csv(self.picks, path)
+
+                QMessageBox.information(self, "Done", f"Picks exported to {Path(path).name}")
             except Exception as e:  # noqa: BLE001
                 QMessageBox.critical(self, "Error", f"Could not export picks: {e}")
 

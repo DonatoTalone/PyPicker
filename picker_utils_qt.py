@@ -30,6 +30,8 @@ DEFAULT_CONFIG = {
         "reset_view": "R",
         "save_sac": "Ctrl+S",
         "export_csv": "Ctrl+E",
+        "export_picks": "Ctrl+E",
+        "import_picks": "Ctrl+I",
         "toggle_filter": "F",
         "pick_p": "1",
         "pick_s": "2",
@@ -592,10 +594,188 @@ def get_spectrum(trace):
 
     return freq, spec
 
+def normalize_polarity(val):
+    """
+    Normalize polarity to one of 'positive', 'negative', or 'undecidable'.
+    """
+    if val is None:
+        return "undecidable"
+    if isinstance(val, (int, float)):
+        if val > 0:
+            return "positive"
+        elif val < 0:
+            return "negative"
+        return "undecidable"
+    s = str(val).strip().lower()
+    if s in ("positive", "+", "+1", "1", "1.0", "pos", "u", "up", "c", "comp", "compression"):
+        return "positive"
+    elif s in ("negative", "-", "-1", "-1.0", "neg", "d", "down", "dil", "dilatation"):
+        return "negative"
+    return "undecidable"
+
+def normalize_onset(val):
+    """
+    Normalize onset to one of 'Impulsive', 'Emergent', or 'Unknown'.
+    """
+    if val is None:
+        return "Unknown"
+    s = str(val).strip().lower()
+    if s in ("i", "impulsive"):
+        return "Impulsive"
+    elif s in ("e", "emergent"):
+        return "Emergent"
+    return "Unknown"
+
+def parse_sac_phase_identification(raw_name, default_phase="P"):
+    """
+    Parse a SAC arrival identification string (e.g. 'IPU', 'EPD', 'P+', 'P-', 'P')
+    into (phase, onset, polarity).
+    """
+    if not raw_name or raw_name == "-12345":
+        return default_phase, "Unknown", "undecidable"
+
+    s = raw_name.strip()
+    onset = "Unknown"
+    polarity = "undecidable"
+
+    # 1. Check onset prefix (I or E) if followed by standard phase letter (P or S)
+    if len(s) >= 2 and s[0].upper() in ("I", "E") and s[1].upper() in ("P", "S"):
+        onset = "Impulsive" if s[0].upper() == "I" else "Emergent"
+        s = s[1:]
+
+    # 2. Check polarity suffix (+, -, U, D, C)
+    if s.endswith(("+", "U", "u", "C", "c")):
+        polarity = "positive"
+        s = s[:-1].rstrip("_")
+    elif s.endswith(("-", "D", "d")):
+        polarity = "negative"
+        s = s[:-1].rstrip("_")
+
+    phase = s.upper() if s else default_phase
+    return phase, onset, polarity
+
+def format_sac_pick_name(phase, onset, polarity):
+    """
+    Format a standard SAC arrival identification string (e.g. 'IPU', 'EPD', 'P+', 'P').
+    """
+    p = phase.upper() if phase else "P"
+    onset_char = ""
+    if onset:
+        ons_norm = normalize_onset(onset)
+        if ons_norm == "Impulsive":
+            onset_char = "I"
+        elif ons_norm == "Emergent":
+            onset_char = "E"
+
+    pol_char = ""
+    if polarity:
+        pol_clean = normalize_polarity(polarity)
+        if pol_clean == "positive":
+            pol_char = "U"
+        elif pol_clean == "negative":
+            pol_char = "D"
+
+    # For standard P or S arrivals
+    if p in ("P", "S"):
+        return f"{onset_char}{p}{pol_char}" if (onset_char or pol_char) else p
+    else:
+        # For other phases like Pg, Sg
+        if pol_char:
+            return f"{p}{'+' if pol_char == 'U' else '-'}"[:8]
+        return p[:8]
+
+def apply_picks_to_stream_sac_headers(stream, picks):
+    """
+    Write picks back into the SAC headers of the loaded stream.
+    Clears old picks first so that deleted picks are actually removed from the headers.
+    """
+    for tr in stream:
+        if not hasattr(tr.stats, "sac"):
+            continue
+        sac = tr.stats.sac
+        for key in ["a", "f", "user0"]:
+            if key in sac:
+                sac[key] = -12345.0
+        for kkey in ["ka", "kuser0"]:
+            if kkey in sac:
+                sac[kkey] = "-12345"
+        for i in range(10):
+            t_key = f"t{i}"
+            err_key = f"resp{i}"
+            name_key = f"kt{i}"
+            usr_key = f"user{i+1}" if i < 9 else None
+            kusr_key = f"kuser{i+1}" if i + 1 <= 2 else None
+            if t_key in sac:
+                sac[t_key] = -12345.0
+            if err_key in sac:
+                sac[err_key] = -12345.0
+            if name_key in sac:
+                sac[name_key] = "-12345"
+            if usr_key and usr_key in sac:
+                sac[usr_key] = -12345.0
+            if kusr_key and kusr_key in sac:
+                sac[kusr_key] = "-12345"
+
+    if not picks:
+        return
+
+    sta_other_idx = {}
+
+    for pk in picks:
+        target_traces = stream.select(station=pk["sta"])
+        if not target_traces:
+            continue
+
+        unc = float(pk.get("uncertainty", 0.0))
+        pol = normalize_polarity(pk.get("polarity"))
+        onset = normalize_onset(pk.get("onset"))
+        p_name = pk.get("phase", "").upper()
+        pick_time = UTCDateTime(pk["abs_t"])
+
+        pol_val = 1.0 if pol == "positive" else (-1.0 if pol == "negative" else 0.0)
+        pol_str = "POSITIVE" if pol == "positive" else ("NEGATIVE" if pol == "negative" else "UNDECID")
+
+        if p_name == "P":
+            ka_label = format_sac_pick_name("P", onset, pol)
+            for tr in target_traces:
+                if not hasattr(tr.stats, "sac"):
+                    tr.stats.sac = {}
+                rel_time = pick_time - tr.stats.starttime
+                tr.stats.sac["a"] = rel_time
+                tr.stats.sac["ka"] = ka_label
+                tr.stats.sac["f"] = unc
+                tr.stats.sac["user0"] = pol_val
+                tr.stats.sac["kuser0"] = pol_str
+        elif p_name == "S":
+            kt0_label = format_sac_pick_name("S", onset, pol)
+            for tr in target_traces:
+                if not hasattr(tr.stats, "sac"):
+                    tr.stats.sac = {}
+                rel_time = pick_time - tr.stats.starttime
+                tr.stats.sac["t0"] = rel_time
+                tr.stats.sac["kt0"] = kt0_label
+                tr.stats.sac["resp0"] = unc
+                tr.stats.sac["user1"] = pol_val
+                tr.stats.sac["kuser1"] = pol_str
+        else:
+            cur_idx = sta_other_idx.get(pk["sta"], 0) + 1
+            sta_other_idx[pk["sta"]] = cur_idx
+            if cur_idx <= 9:
+                label = format_sac_pick_name(p_name, onset, pol)
+                for tr in target_traces:
+                    if not hasattr(tr.stats, "sac"):
+                        tr.stats.sac = {}
+                    rel_time = pick_time - tr.stats.starttime
+                    tr.stats.sac[f"t{cur_idx}"] = rel_time
+                    tr.stats.sac[f"kt{cur_idx}"] = label
+                    tr.stats.sac[f"resp{cur_idx}"] = unc
+                    if cur_idx + 1 <= 9:
+                        tr.stats.sac[f"user{cur_idx+1}"] = pol_val
+
 def extract_existing_picks(stream):
     """
     Extract picking information from SAC headers.
-    Looks for markers: a (P), t0 (S), and t1-t3.
+    Looks for markers: a (P), t0 (S), and t1-t9, along with polarity and onset.
     """
     found_picks = []
     seen_identifiers = set()
@@ -605,29 +785,44 @@ def extract_existing_picks(stream):
             continue
 
         sac = tr.stats.sac
-        # Map: (SAC time key, SAC label key, SAC error key)
+        # Map: (SAC time key, SAC label key, SAC error key, SAC user float key, SAC user str key, default_phase)
         markers = [
-            ("a", "ka", "f"),
-            ("t0", "kt0", "resp0"),   # era "std0"
-            ("t1", "kt1", "resp1"),   # era "std1"
-            ("t2", "kt2", "resp2"),   # era "std2"
-            ("t3", "kt3", "resp3"),   # era "std3"
-
+            ("a", "ka", "f", "user0", "kuser0", "P"),
+            ("t0", "kt0", "resp0", "user1", "kuser1", "S"),
         ]
+        for i in range(1, 10):
+            markers.append((f"t{i}", f"kt{i}", f"resp{i}", f"user{i+1}" if i < 9 else None, None, f"T{i}"))
 
-        for time_key, name_key, err_key in markers:
+        for time_key, name_key, err_key, usr_key, kusr_key, def_phase in markers:
             if time_key in sac:
                 rel_time = sac[time_key]
+                if rel_time == -12345.0:
+                    continue
+
                 abs_t = tr.stats.starttime + rel_time
 
-                phase_name = sac.get(name_key, time_key.upper()).strip()
-                if not phase_name:
-                    phase_name = time_key.upper()
+                raw_name = str(sac.get(name_key, def_phase)).strip()
+                if not raw_name or raw_name == "-12345":
+                    raw_name = def_phase
+
+                phase_name, onset, pol_from_name = parse_sac_phase_identification(raw_name, default_phase=def_phase)
 
                 # Handle uncertainty; SAC uses -12345.0 as null
                 uncertainty = sac.get(err_key, 0.0)
                 if uncertainty == -12345.0:
                     uncertainty = 0.0
+
+                # Polarity check order:
+                # 1. kuser
+                # 2. user
+                # 3. name-derived
+                polarity = "undecidable"
+                if kusr_key and kusr_key in sac and str(sac[kusr_key]).strip() not in ("", "-12345"):
+                    polarity = normalize_polarity(sac[kusr_key])
+                elif usr_key and usr_key in sac and sac[usr_key] != -12345.0:
+                    polarity = normalize_polarity(sac[usr_key])
+                else:
+                    polarity = pol_from_name
 
                 pick_id = (tr.stats.station, phase_name, str(abs_t))
 
@@ -639,6 +834,8 @@ def extract_existing_picks(stream):
                             "phase": phase_name,
                             "abs_t": str(abs_t),
                             "uncertainty": uncertainty,
+                            "polarity": polarity,
+                            "onset": onset,
                         }
                     )
                     seen_identifiers.add(pick_id)
@@ -660,8 +857,8 @@ def extract_picks_from_csv(filename):
                     "phase": row[2],
                     "abs_t": row[3],
                     "uncertainty": float(row[4]) if len(row) > 4 else 0.0,
-                    "polarity": row[5] if len(row) > 5 else "Unknown",
-                    "onset": row[6] if len(row) > 6 else "Unknown",
+                    "polarity": normalize_polarity(row[5]) if len(row) > 5 else "undecidable",
+                    "onset": normalize_onset(row[6]) if len(row) > 6 else "Unknown",
                 }
                 picks.append(pk)
     return picks
@@ -670,9 +867,6 @@ def extract_picks_from_seisgram_pick(filename):
     """
     Extract the pick list from a .pick file created by Seisgram2k.
     """
-    _ONSET_MAP = {"i": "impulsive", "e": "emergent"}
-    _POLARITY_MAP = {"c": "positive", "u": "positive", "+": "positive",
-        "d": "negative", "-": "negative",}
     picks = []
     with open(filename, "r") as f:
         for line in f:
@@ -687,8 +881,8 @@ def extract_picks_from_seisgram_pick(filename):
                 "phase": row[4],
                 "abs_t": abs_t.isoformat(timespec="milliseconds"),
                 "uncertainty": float(row[10]) if len(row) > 10 else 0.0,
-                "polarity": _POLARITY_MAP.get(row[5].lower(), "Unknown"),
-                "onset": _ONSET_MAP.get(row[3].lower(), "Unknown"),
+                "polarity": normalize_polarity(row[5]),
+                "onset": normalize_onset(row[3]),
             }
             picks.append(pk)
     return picks
@@ -707,8 +901,8 @@ def extract_picks_from_quakeml(filename):
                 "phase": pick.phase_hint if pick.phase_hint else "",
                 "abs_t": str(pick.time),
                 "uncertainty": pick.time_errors.uncertainty if pick.time_errors and pick.time_errors.uncertainty else 0.0,
-                "polarity": pick.polarity.capitalize() if pick.polarity else "Unknown",
-                "onset": pick.onset.capitalize() if pick.onset else "Unknown"
+                "polarity": normalize_polarity(pick.polarity),
+                "onset": normalize_onset(pick.onset),
             }
             picks.append(pk)
     return picks
@@ -728,8 +922,8 @@ def export_to_csv(picks, filename):
                     p["phase"],
                     p["abs_t"],
                     p.get("uncertainty", 0.0),
-                    p.get("polarity", "Unknown"),
-                    p.get("onset", "Unknown"),
+                    normalize_polarity(p.get("polarity", "undecidable")),
+                    normalize_onset(p.get("onset", "Unknown")),
                 ]
             )
 
@@ -738,51 +932,7 @@ def save_picks_to_sac(stream, picks):
     Write picks back into the SAC headers of the loaded stream and save files.
     Clears old picks first so that deleted picks are actually removed from the files.
     """
-    for tr in stream:
-        if not hasattr(tr.stats, "sac"):
-            continue
-        sac = tr.stats.sac
-        for key in ["a", "f"]:    # Pulisci i marker della fase P
-            if key in sac:
-                sac[key] = -12345.0
-        if "ka" in sac:
-            sac["ka"] = "-12345"
-        for i in range(10):    # Pulisci i marker delle fasi S e altre (t0 - t9)
-            t_key = f"t{i}"
-            err_key = f"resp{i}"
-            name_key = f"kt{i}"
-            
-            if t_key in sac: 
-                sac[t_key] = -12345.0
-            if err_key in sac: 
-                sac[err_key] = -12345.0
-            if name_key in sac: 
-                sac[name_key] = "-12345"
-    for pk in picks:
-        target_traces = stream.select(station=pk["sta"])
-        unc = float(pk.get("uncertainty", 0.0))
-        i = 0
-        for tr in target_traces:
-            if not hasattr(tr.stats, "sac"):
-                tr.stats.sac = {}
-            pick_time = UTCDateTime(pk["abs_t"])
-            rel_time = pick_time - tr.stats.starttime
-            p_name = pk["phase"].upper()
-            # Mapping logic
-            if p_name == "P":
-                tr.stats.sac["a"] = rel_time
-                tr.stats.sac["ka"] = "P"
-                tr.stats.sac["f"] = unc
-            elif p_name == "S":
-                tr.stats.sac["t0"] = rel_time
-                tr.stats.sac["kt0"] = "S"
-                tr.stats.sac["resp0"] = unc
-            else:
-                i += 1
-                if i <= 9:
-                    tr.stats.sac[f"t{i}"] = rel_time
-                    tr.stats.sac[f"kt{i}"] = p_name
-                    tr.stats.sac[f"resp{i}"] = unc
+    apply_picks_to_stream_sac_headers(stream, picks)
     for tr in stream:
         if "filename" in tr.stats and tr.stats.filename:
             try:
@@ -805,15 +955,315 @@ def export_to_quakeml(picks, filename):
         if pk.get("uncertainty", 0.0) > 0:
             pick.time_errors = {"uncertainty": pk["uncertainty"]}
         
-        if "polarity" in pk and pk["polarity"] != "Unknown":
-            pick.polarity = pk["polarity"].lower()
-        if "onset" in pk and pk["onset"] != "Unknown":
-            pick.onset = pk["onset"].lower()
+        pol = normalize_polarity(pk.get("polarity"))
+        if pol in ("positive", "negative", "undecidable"):
+            pick.polarity = pol
+        ons = normalize_onset(pk.get("onset"))
+        if ons in ("Impulsive", "Emergent"):
+            pick.onset = ons.lower()
             
         event.picks.append(pick)
     
     cat.append(event)
     cat.write(filename, format="QUAKEML")
+
+def uncertainty_to_hypo71_weight(unc):
+    """Map pick uncertainty in seconds to HYPO71 weight code (0-4)."""
+    try:
+        u = float(unc)
+    except Exception:
+        return 0
+    if u <= 0.05:
+        return 0
+    elif u <= 0.10:
+        return 1
+    elif u <= 0.20:
+        return 2
+    elif u <= 0.50:
+        return 3
+    return 4
+
+def hypo71_weight_to_uncertainty(weight_code):
+    """Map HYPO71 weight code (0-4) to representative uncertainty in seconds."""
+    mapping = {0: 0.02, 1: 0.10, 2: 0.20, 3: 0.50, 4: 1.00}
+    try:
+        return mapping.get(int(weight_code), 0.0)
+    except Exception:
+        return 0.0
+
+def export_to_seisgram_pick(picks, filename):
+    """
+    Export the pick list to a SeisGram2K .pick / NonLinLoc observation file.
+    """
+    with open(filename, "w") as f:
+        for p in picks:
+            t = UTCDateTime(p["abs_t"])
+            sta = str(p.get("sta", "?")).strip().ljust(6)
+            inst = "?".ljust(4)
+            cmp = (str(p.get("cha_source", "?")).strip() or "?").ljust(4)
+            onset = normalize_onset(p.get("onset"))
+            ons_char = "i" if onset == "Impulsive" else ("e" if onset == "Emergent" else "?")
+            phase = str(p.get("phase", "?")).strip().ljust(6)
+            pol = normalize_polarity(p.get("polarity"))
+            pol_char = "U" if pol == "positive" else ("D" if pol == "negative" else "?")
+            date_str = t.strftime("%Y%m%d")
+            time_str = t.strftime("%H%M")
+            sec_val = t.second + t.microsecond * 1e-6
+            unc = float(p.get("uncertainty", 0.0))
+            f.write(
+                f"{sta} {inst} {cmp} {ons_char} {phase} {pol_char} "
+                f"{date_str} {time_str} {sec_val:7.4f} GAU {unc:9.2e} -1.00e+00 -1.00e+00 -1.00e+00\n"
+            )
+        f.write("\n")
+
+def export_to_nlloc(picks, filename):
+    """
+    Export the pick list to a NonLinLoc Phase Observation file (.obs).
+    Uses standard NLLOC_OBS space-delimited format identical to SeisGram2K.
+    """
+    export_to_seisgram_pick(picks, filename)
+
+def extract_picks_from_nlloc(filename):
+    """
+    Extract picks from a NonLinLoc phase file (.obs, .nll, .hyp, or .dat).
+    Supports standard 11-column and 14-column phase line variants.
+    """
+    picks = []
+    with open(filename, "r") as f:
+        for line in f:
+            line_str = line.strip()
+            if not line_str or line_str.startswith("#"):
+                continue
+            row = line_str.split()
+            if row[0].upper() == "PHASE":
+                row = row[1:]
+            if len(row) < 8:
+                continue
+            sta = row[0]
+            cmp = row[2] if len(row) > 2 else "?"
+            onset = row[3] if len(row) > 3 else "?"
+            phase = row[4] if len(row) > 4 else "?"
+            polarity = row[5] if len(row) > 5 else "?"
+
+            try:
+                if len(row[6]) == 8:
+                    # YYYYMMDD HHMM SS.SSS
+                    date_part = row[6]
+                    time_part = row[7]
+                    sec_float = float(row[8])
+                    unc_idx = 10
+                elif len(row[6]) == 4:
+                    # YYYY MM DD HH MM SS.SSS
+                    date_part = f"{row[6]}{int(row[7]):02d}{int(row[8]):02d}"
+                    time_part = f"{int(row[9]):02d}{int(row[10]):02d}"
+                    sec_float = float(row[11])
+                    unc_idx = 13
+                else:
+                    continue
+
+                t0 = datetime.strptime(date_part + time_part, "%Y%m%d%H%M")
+                abs_t = t0 + timedelta(seconds=sec_float)
+                uncertainty = float(row[unc_idx]) if len(row) > unc_idx else 0.0
+
+                picks.append({
+                    "sta": sta,
+                    "cha_source": cmp if cmp != "?" else "",
+                    "phase": phase,
+                    "abs_t": abs_t.isoformat(timespec="milliseconds"),
+                    "uncertainty": uncertainty,
+                    "polarity": normalize_polarity(polarity),
+                    "onset": normalize_onset(onset),
+                })
+            except Exception:
+                continue
+    return picks
+
+def export_to_hypo71(picks, filename):
+    """
+    Export picks to a HYPO71 / HYPOELLIPSE phase card file (.pha).
+    Cards are grouped by station, encoding P and S arrivals on fixed-column lines.
+    """
+    sta_picks = {}
+    for pk in picks:
+        sta = pk.get("sta", "")
+        if not sta:
+            continue
+        if sta not in sta_picks:
+            sta_picks[sta] = {}
+        p_name = pk.get("phase", "").upper()
+        if p_name.startswith("P") and "P" not in sta_picks[sta]:
+            sta_picks[sta]["P"] = pk
+        elif p_name.startswith("S") and "S" not in sta_picks[sta]:
+            sta_picks[sta]["S"] = pk
+        elif p_name not in sta_picks[sta]:
+            sta_picks[sta][p_name] = pk
+
+    with open(filename, "w") as f:
+        for sta, ph_map in sta_picks.items():
+            p_pick = ph_map.get("P")
+            s_pick = ph_map.get("S")
+
+            ref_pick = p_pick or s_pick or next(iter(ph_map.values()), None)
+            if not ref_pick:
+                continue
+
+            t_ref = UTCDateTime(ref_pick["abs_t"])
+            yy = t_ref.year % 100
+            dt_str = f"{yy:02d}{t_ref.month:02d}{t_ref.day:02d}{t_ref.hour:02d}{t_ref.minute:02d}"
+
+            if p_pick:
+                t_p = UTCDateTime(p_pick["abs_t"])
+                p_ons_code = "I" if normalize_onset(p_pick.get("onset")) == "Impulsive" else ("E" if normalize_onset(p_pick.get("onset")) == "Emergent" else " ")
+                p_pol_code = "U" if normalize_polarity(p_pick.get("polarity")) == "positive" else ("D" if normalize_polarity(p_pick.get("polarity")) == "negative" else " ")
+                p_wt_code = str(uncertainty_to_hypo71_weight(p_pick.get("uncertainty", 0.0)))
+                p_sec = (t_p - UTCDateTime(t_ref.year, t_ref.month, t_ref.day, t_ref.hour, t_ref.minute))
+                p_sec_str = f"{p_sec:5.2f}"
+            else:
+                p_ons_code = " "
+                p_pol_code = " "
+                p_wt_code = " "
+                p_sec_str = "     "
+
+            if s_pick:
+                t_s = UTCDateTime(s_pick["abs_t"])
+                s_ons_code = "I" if normalize_onset(s_pick.get("onset")) == "Impulsive" else ("E" if normalize_onset(s_pick.get("onset")) == "Emergent" else " ")
+                s_rmk = f"{s_ons_code}S "
+                s_wt_code = str(uncertainty_to_hypo71_weight(s_pick.get("uncertainty", 0.0)))
+                s_sec = (t_s - UTCDateTime(t_ref.year, t_ref.month, t_ref.day, t_ref.hour, t_ref.minute))
+                s_sec_str = f"{s_sec:5.2f}"
+            else:
+                s_sec_str = "     "
+                s_rmk = "   "
+                s_wt_code = " "
+
+            sta_str = sta[:4].ljust(4)
+            p_p_char = "P" if p_pick else " "
+            line = f"{sta_str}{p_ons_code}{p_p_char}{p_pol_code}{p_wt_code} {dt_str}{p_sec_str}       {s_sec_str}{s_rmk}{s_wt_code}\n"
+            f.write(line)
+
+        # Terminator instruction card (blank card)
+        f.write("\n")
+
+def extract_picks_from_hypo71(filename):
+    """
+    Extract picks from a HYPO71 / HYPOELLIPSE phase card file (.pha, .h71, .dat).
+    """
+    picks = []
+    with open(filename, "r") as f:
+        for line in f:
+            if len(line.rstrip("\r\n")) < 20:
+                continue
+            sta = line[0:4].strip()
+            if not sta or sta.startswith("#"):
+                continue
+
+            p_rem = line[4:8]
+            dt_str = line[9:19].strip()
+            p_sec_str = line[19:24].strip() if len(line) >= 24 else ""
+            s_sec_str = line[31:36].strip() if len(line) >= 36 else ""
+            s_rem = line[36:40] if len(line) >= 40 else ""
+
+            if len(dt_str) != 10:
+                continue
+
+            try:
+                yy = int(dt_str[0:2])
+                year = 2000 + yy if yy < 70 else 1900 + yy
+                month = int(dt_str[2:4])
+                day = int(dt_str[4:6])
+                hour = int(dt_str[6:8])
+                minute = int(dt_str[8:10])
+                t_base = UTCDateTime(year, month, day, hour, minute)
+
+                # 1. P arrival
+                if p_sec_str:
+                    p_sec = float(p_sec_str)
+                    p_abs_t = t_base + p_sec
+                    p_ons = "Impulsive" if p_rem[0].upper() == "I" else ("Emergent" if p_rem[0].upper() == "E" else "Unknown")
+                    p_pol = "positive" if p_rem[2].upper() in ("U", "C", "+") else ("negative" if p_rem[2].upper() in ("D", "-") else "undecidable")
+                    p_wt = p_rem[3] if len(p_rem) > 3 and p_rem[3].isdigit() else "0"
+                    p_unc = hypo71_weight_to_uncertainty(p_wt)
+
+                    picks.append({
+                        "sta": sta,
+                        "cha_source": "",
+                        "phase": "P",
+                        "abs_t": str(p_abs_t),
+                        "uncertainty": p_unc,
+                        "polarity": p_pol,
+                        "onset": p_ons,
+                    })
+
+                # 2. S arrival
+                if s_sec_str:
+                    s_sec = float(s_sec_str)
+                    s_abs_t = t_base + s_sec
+                    s_ons = "Impulsive" if "I" in s_rem.upper() else ("Emergent" if "E" in s_rem.upper() else "Unknown")
+                    s_wt = s_rem[-1] if s_rem.strip() and s_rem.strip()[-1].isdigit() else "0"
+                    s_unc = hypo71_weight_to_uncertainty(s_wt)
+
+                    picks.append({
+                        "sta": sta,
+                        "cha_source": "",
+                        "phase": "S",
+                        "abs_t": str(s_abs_t),
+                        "uncertainty": s_unc,
+                        "polarity": "undecidable",
+                        "onset": s_ons,
+                    })
+            except Exception:
+                continue
+
+    return picks
+
+def load_picks_from_file(filename, format_hint=None):
+    """
+    Universal picks loader that auto-detects or uses format_hint for:
+    CSV, QuakeML, SeisGram2K (.pick), NonLinLoc (.obs/.hyp), HYPO71/HYPOELLIPSE (.pha/.h71).
+    """
+    p = Path(filename)
+    ext = p.suffix.lower()
+
+    if ext == ".csv" or (format_hint and "csv" in format_hint.lower()):
+        return extract_picks_from_csv(filename)
+    elif ext in (".qml", ".xml") or (format_hint and ("qml" in format_hint.lower() or "quakeml" in format_hint.lower())):
+        return extract_picks_from_quakeml(filename)
+    elif ext == ".pick" or (format_hint and "seisgram" in format_hint.lower()):
+        return extract_picks_from_seisgram_pick(filename)
+    elif ext in (".obs", ".nll") or (format_hint and "nonlinloc" in format_hint.lower()):
+        return extract_picks_from_nlloc(filename)
+    elif ext in (".pha", ".h71") or (format_hint and ("hypo71" in format_hint.lower() or "hypoellipse" in format_hint.lower())):
+        return extract_picks_from_hypo71(filename)
+
+    # Content auto-detection for .dat, .txt or ambiguous extensions
+    try:
+        with open(filename, "r") as f:
+            head_lines = [f.readline() for _ in range(10)]
+        non_empty = [l.strip() for l in head_lines if l.strip()]
+        if not non_empty:
+            return []
+        first = non_empty[0]
+
+        if first.startswith("<?xml") or "<q:quakeml" in first or "<quakeml" in first:
+            return extract_picks_from_quakeml(filename)
+        if ";" in first or "," in first or "UTC_Time" in first:
+            return extract_picks_from_csv(filename)
+        if any("GAU" in l or l.startswith("PHASE") for l in non_empty):
+            return extract_picks_from_nlloc(filename)
+        if len(first) >= 20 and len(first.split()[0]) <= 5 and any(c in first for c in ("P", "S")):
+            return extract_picks_from_hypo71(filename)
+    except Exception:
+        pass
+
+    # Fallback cascade
+    for fn in (extract_picks_from_nlloc, extract_picks_from_hypo71, extract_picks_from_csv):
+        try:
+            res = fn(filename)
+            if res:
+                return res
+        except Exception:
+            pass
+    return extract_picks_from_csv(filename)
 
 def get_epicentral_distance(tr):
     """Calculate epicentral distance in degrees from SAC headers if available."""
@@ -889,24 +1339,40 @@ def remove_pick_from_sac(stream, station, channel, phase_name):
             continue
         sac = tr.stats.sac
         if p_name == "P":
-            if sac.get("ka", "").strip().upper() == "P" or "a" in sac:
+            sac_ka = sac.get("ka", "").strip().upper()
+            ka_phase, _, _ = parse_sac_phase_identification(sac_ka, default_phase="P")
+            if ka_phase == "P" or "a" in sac:
                 sac["a"] = -12345.0
                 sac["ka"] = "-12345"
                 sac["f"] = -12345.0
-        elif p_name == "S":  # noqa: SIM102
-            if sac.get("kt0", "").strip().upper() == "S" or "t0" in sac:
+                sac["user0"] = -12345.0
+                sac["kuser0"] = "-12345"
+        elif p_name == "S":
+            sac_kt0 = sac.get("kt0", "").strip().upper()
+            kt0_phase, _, _ = parse_sac_phase_identification(sac_kt0, default_phase="S")
+            if kt0_phase == "S" or "t0" in sac:
                 sac["t0"] = -12345.0
                 sac["kt0"] = "-12345"
                 sac["resp0"] = -12345.0
+                sac["user1"] = -12345.0
+                sac["kuser1"] = "-12345"
 
         for i in range(10):
             name_key = f"kt{i}"
             t_key = f"t{i}"
             err_key = f"resp{i}"
-            if sac.get(name_key, "").strip().upper() == p_name:
+            usr_key = f"user{i+1}" if i < 9 else None
+            kusr_key = f"kuser{i+1}" if i + 1 <= 2 else None
+            kt_val = sac.get(name_key, "").strip().upper()
+            kt_phase, _, _ = parse_sac_phase_identification(kt_val, default_phase=f"T{i}")
+            if kt_phase == p_name or kt_val == p_name:
                 sac[t_key] = -12345.0
                 sac[name_key] = "-12345"
                 sac[err_key] = -12345.0
+                if usr_key and usr_key in sac:
+                    sac[usr_key] = -12345.0
+                if kusr_key and kusr_key in sac:
+                    sac[kusr_key] = "-12345"
 
         if "filename" in tr.stats and tr.stats.filename:
             try:
@@ -1073,49 +1539,7 @@ def update_sac_headers_with_location(stream, evla, evlo, depth_km, origin_time, 
     """
     # If picks are provided, apply them to SAC headers of the stream
     if picks:
-        for tr in stream:
-            if not hasattr(tr.stats, "sac"):
-                continue
-            sac = tr.stats.sac
-            for key in ["a", "f"]:
-                if key in sac:
-                    sac[key] = -12345.0
-            if "ka" in sac:
-                sac["ka"] = "-12345"
-            for i in range(10):
-                t_key = f"t{i}"
-                err_key = f"resp{i}"
-                name_key = f"kt{i}"
-                if t_key in sac:
-                    sac[t_key] = -12345.0
-                if err_key in sac:
-                    sac[err_key] = -12345.0
-                if name_key in sac:
-                    sac[name_key] = "-12345"
-        for pk in picks:
-            target_traces = stream.select(station=pk["sta"])
-            unc = float(pk.get("uncertainty", 0.0))
-            i = 0
-            for tr in target_traces:
-                if not hasattr(tr.stats, "sac"):
-                    tr.stats.sac = {}
-                pick_time = UTCDateTime(pk["abs_t"])
-                rel_time = pick_time - tr.stats.starttime
-                p_name = pk["phase"].upper()
-                if p_name == "P":
-                    tr.stats.sac["a"] = rel_time
-                    tr.stats.sac["ka"] = "P"
-                    tr.stats.sac["f"] = unc
-                elif p_name == "S":
-                    tr.stats.sac["t0"] = rel_time
-                    tr.stats.sac["kt0"] = "S"
-                    tr.stats.sac["resp0"] = unc
-                else:
-                    i += 1
-                    if i <= 9:
-                        tr.stats.sac[f"t{i}"] = rel_time
-                        tr.stats.sac[f"kt{i}"] = p_name
-                        tr.stats.sac[f"resp{i}"] = unc
+        apply_picks_to_stream_sac_headers(stream, picks)
 
     saved_files = []
     for tr in stream:

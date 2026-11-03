@@ -17,3 +17,4 @@ pypicker.egg-info
 tests
 doc/icon/Logo_PyPicker.svg
 .pytest_cache
+test_read.spec

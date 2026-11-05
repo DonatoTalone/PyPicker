@@ -181,7 +181,8 @@ class Hypo71Dialog(QDialog):
         super().__init__(parent)
         self.parent = parent  # ty: ignore[invalid-assignment]
         self.setWindowTitle("Hypo71 Earthquake Location")
-        self.setWindowIcon(utils.get_app_icon("dark"))
+        theme_mode = getattr(parent, "current_theme_mode", None) or (parent.theme_sel.currentText() if parent and hasattr(parent, "theme_sel") else "System")
+        self.setWindowIcon(utils.get_app_icon(theme_mode))
         self.resize(850, 700)
         self.results = None
         self.init_ui()
@@ -682,7 +683,8 @@ class DocumentationViewerDialog(QDialog):
     def __init__(self, parent=None, initial_doc="README.md"):
         super().__init__(parent)
         self.setWindowTitle("PyPicker - Documentation Viewer")
-        self.setWindowIcon(utils.get_app_icon("dark"))
+        theme_mode = getattr(parent, "current_theme_mode", None) or (parent.theme_sel.currentText() if parent and hasattr(parent, "theme_sel") else "System")
+        self.setWindowIcon(utils.get_app_icon(theme_mode))
         self.resize(1020, 740)
         self.doc_dir = utils.get_doc_dir()
         self.history = []
@@ -965,8 +967,15 @@ class SeismicPickerQT(QMainWindow):
         super().__init__()
         self.config = utils.load_config()
         self.setWindowTitle("PyPicker - Seismic Waveform Analyzer")
-        self.setWindowIcon(utils.get_app_icon("dark"))
-        self.resize(1200, 900)
+        self.current_theme_mode = "dark" if utils.detect_system_dark_mode() is not False else "light"
+        self.setWindowIcon(utils.get_app_icon(self.current_theme_mode))
+        self.setMinimumSize(800, 500)
+        screen = QApplication.primaryScreen()
+        if screen:
+            geom = screen.availableGeometry()
+            self.resize(min(1200, geom.width() - 50), min(850, geom.height() - 50))
+        else:
+            self.resize(1200, 800)
 
         # Data initialization
         if stream:
@@ -1268,17 +1277,19 @@ class SeismicPickerQT(QMainWindow):
         right_sidebar.addWidget(sc_group)
         right_group.setLayout(right_sidebar)
 
-        # --- MAIN AREA: Graphics & Table ---
-        center_widget = QWidget()
-        graph_area = QVBoxLayout(center_widget)
-        graph_area.setContentsMargins(0, 0, 0, 0)
+        # --- MAIN AREA: Graphics & Table (Vertical Splitter) ---
+        center_splitter = QSplitter(Qt.Orientation.Vertical)
+        center_splitter.setChildrenCollapsible(False)
+
         self.scroll = QScrollArea()  # ty: ignore[invalid-assignment]
         self.scroll.setWidgetResizable(True)
+        self.scroll.setMinimumHeight(180)
         self.win = pg.GraphicsLayoutWidget()
         self.scroll.setWidget(self.win)
-        graph_area.addWidget(self.scroll, stretch=4)
+        center_splitter.addWidget(self.scroll)
 
         self.table = QTableWidget(0, 9)
+        self.table.setMinimumHeight(80)
         self.table.setHorizontalHeaderLabels(
             ["Sta", "Cha", "Phase", "Date", "Time", "Unc (s)", "Polarity", "Onset", "Action"]
         )
@@ -1286,14 +1297,32 @@ class SeismicPickerQT(QMainWindow):
         self.table.horizontalHeader().setSectionResizeMode(  # ty: ignore[unresolved-attribute]
             QHeaderView.ResizeMode.Stretch
         )
-        graph_area.addWidget(self.table, stretch=1)
+        center_splitter.addWidget(self.table)
+        center_splitter.setStretchFactor(0, 4)
+        center_splitter.setStretchFactor(1, 1)
+        center_splitter.setSizes([600, 180])
 
-        main_splitter.addWidget(left_group)
-        main_splitter.addWidget(center_widget)
-        main_splitter.addWidget(right_group)
-        main_splitter.setCollapsible(0, False)  # left_group
-        main_splitter.setCollapsible(1, False)  # center_widget
-        main_splitter.setCollapsible(2, False)  # right_group
+        # Wrap sidebars in QScrollArea so vertical minimum size hint doesn't lock window height on GNOME
+        left_scroll = QScrollArea()
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        left_scroll.setWidget(left_group)
+        left_scroll.setMinimumWidth(220)
+
+        right_scroll = QScrollArea()
+        right_scroll.setWidgetResizable(True)
+        right_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        right_scroll.setWidget(right_group)
+        right_scroll.setMinimumWidth(220)
+
+        main_splitter.addWidget(left_scroll)
+        main_splitter.addWidget(center_splitter)
+        main_splitter.addWidget(right_scroll)
+        main_splitter.setCollapsible(0, False)  # left_scroll
+        main_splitter.setCollapsible(1, False)  # center_splitter
+        main_splitter.setCollapsible(2, False)  # right_scroll
         main_splitter.setSizes([250, 800, 250])
 
         # Signal connections
@@ -1572,6 +1601,19 @@ class SeismicPickerQT(QMainWindow):
 
         self.current_bg = bg_color
         self.fg_color = fg_color
+        self.current_theme_mode = "light" if self._is_light_bg(bg_color) else "dark"
+
+        theme_icon = utils.get_app_icon(self.current_theme_mode)
+        self.setWindowIcon(theme_icon)
+        if app:
+            app.setWindowIcon(theme_icon)  # ty: ignore[unresolved-attribute]
+        for dlg_attr in ("_hypo71_dialog", "_doc_dialog", "_focmec_dialog", "_map_dialog"):
+            dlg = getattr(self, dlg_attr, None)
+            if dlg is not None:
+                try:
+                    dlg.setWindowIcon(theme_icon)
+                except Exception:  # noqa: BLE001, S110
+                    pass
 
         pg.setConfigOption("background", bg_color)
         pg.setConfigOption("foreground", fg_color)
@@ -1865,7 +1907,7 @@ class SeismicPickerQT(QMainWindow):
             sta_idx = self.sta_sel.currentIndex()
             target_sta = [self.stations[sta_idx]["sta"]] if sta_idx >= 0 else []
             self.sta_count_label.setText(f"{sta_idx + 1}/{self.sta_sel.count()}")
-            total_h = self.scroll.height() - 20  # ty: ignore[unresolved-attribute]
+            total_h = 300
             raw_target_st = Stream([tr for tr in self.original_stream if tr.stats.station in target_sta])
             try:
                 proc_st = self._get_preprocessed_stream(raw_target_st, params)
@@ -1905,7 +1947,7 @@ class SeismicPickerQT(QMainWindow):
             num_traces = sum([len(proc_st.select(station=s)) for s in target_sta])
             total_h = (num_traces * 150) + (len(target_sta) * 40)
 
-        self.win.setMinimumHeight(max(total_h, 400))
+        self.win.setMinimumHeight(max(total_h, 300))
         first_p = None
         current_row = 0
 
@@ -2135,7 +2177,7 @@ class SeismicPickerQT(QMainWindow):
 
         theo_arrs = self._get_theoretical_arrivals()
 
-        self.win.setMinimumHeight(max(len(blocks) * (3 * 150 + 40), 400))
+        self.win.setMinimumHeight(max(len(blocks) * (3 * 150 + 40), 300))
         duration = self.scalo_duration.value()
         first_p = None
         row = 0
@@ -2844,11 +2886,12 @@ class SeismicPickerQT(QMainWindow):
 
     def show_about_dialog(self):
         """Show About PyPicker dialog with application logo and build details."""
+        theme_mode = getattr(self, "current_theme_mode", self.theme_sel.currentText())
         about_box = QMessageBox(self)
         about_box.setWindowTitle("About PyPicker")
-        about_box.setWindowIcon(utils.get_app_icon("dark"))
+        about_box.setWindowIcon(utils.get_app_icon(theme_mode))
 
-        logo_path = utils.get_app_logo_path(self.theme_sel.currentText())
+        logo_path = utils.get_app_logo_path(theme_mode)
         if logo_path.exists():
             pix = QPixmap(str(logo_path))
             if not pix.isNull():
@@ -2868,7 +2911,8 @@ class SeismicPickerQT(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("PyPicker")
-    app.setWindowIcon(utils.get_app_icon("dark"))
+    init_theme = "dark" if utils.detect_system_dark_mode() is not False else "light"
+    app.setWindowIcon(utils.get_app_icon(init_theme))
     try:
         window = SeismicPickerQT()
     except RuntimeError as exc:

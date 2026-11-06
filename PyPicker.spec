@@ -42,6 +42,14 @@ hiddenimports += [
 ]
 
 obspy_dir = os.path.dirname(obspy.__file__)
+obspy_lib_dir = os.path.join(obspy_dir, 'lib')
+if os.path.isdir(obspy_lib_dir):
+    for fname in os.listdir(obspy_lib_dir):
+        fpath = os.path.join(obspy_lib_dir, fname)
+        if os.path.isfile(fpath):
+            binaries.append((fpath, 'obspy/lib'))
+            datas.append((fpath, 'obspy/lib'))
+
 rel_ver = os.path.join(obspy_dir, 'RELEASE-VERSION')
 if os.path.exists(rel_ver):
     datas.append((rel_ver, 'obspy'))
@@ -94,6 +102,16 @@ exe = EXE(
 )
 
 if sys.platform == 'darwin':
+    app_version = '3.0.1'
+    try:
+        with open('picker_utils_qt.py', 'r', encoding='utf-8') as f:
+            for line in f:
+                if line.startswith('__version__'):
+                    app_version = line.split('=')[1].strip().strip('"').strip("'")
+                    break
+    except Exception:
+        pass
+
     app = BUNDLE(
         exe,
         name='PyPicker.app',
@@ -104,8 +122,8 @@ if sys.platform == 'darwin':
             'CFBundleDisplayName': 'PyPicker',
             'CFBundleGetInfoString': 'PyPicker - Seismic Waveform Picker',
             'CFBundleIdentifier': 'com.donatotalone.pypicker',
-            'CFBundleVersion': '3.0.1',
-            'CFBundleShortVersionString': '3.0.1',
+            'CFBundleVersion': app_version,
+            'CFBundleShortVersionString': app_version,
             'NSHighResolutionCapable': True,
             'NSRequiresAquaSystemAppearance': False,
         },

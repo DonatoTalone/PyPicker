@@ -2,6 +2,7 @@ import logging  # noqa: EXE002
 import re
 import sys
 from pathlib import Path
+import os
 
 # Ensure script and plugin directories are in sys.path for local module resolution
 _app_dir = str(Path(__file__).resolve().parent)
@@ -47,6 +48,97 @@ if getattr(sys, "frozen", False):
         _safe_getfile._is_obspy_patched = True  # ty: ignore[unresolved-attribute]
         inspect.getfile = _safe_getfile  # ty: ignore[invalid-assignment]
 
+    try:
+        import pkg_resources
+
+        _orig_ep_load = pkg_resources.EntryPoint.load
+
+        def _safe_ep_load(self, *args, **kwargs):
+            try:
+                return self.resolve()
+            except Exception:
+                return _orig_ep_load(self, *args, **kwargs)
+
+        pkg_resources.EntryPoint.load = _safe_ep_load
+
+        _orig_load_ep = getattr(pkg_resources, "load_entry_point", None)
+
+        def _safe_load_entry_point(dist, group, name):
+            try:
+                ep = pkg_resources.get_entry_info(dist, group, name)
+                if ep is not None:
+                    return ep.resolve()
+            except Exception:
+                pass
+            if _orig_load_ep:
+                return _orig_load_ep(dist, group, name)
+            raise ImportError(f"Cannot load entry point {group}:{name} from {dist}")
+
+        pkg_resources.load_entry_point = _safe_load_entry_point
+    except Exception:
+        pass
+
+    try:
+        import ctypes
+        import importlib
+        import obspy.core.util.libnames as obspy_libnames
+
+        _orig_load_cdll = obspy_libnames._load_cdll
+
+        def _frozen_load_cdll(name):
+            meipass = getattr(sys, "_MEIPASS", None)
+            search_dirs = []
+            if meipass:
+                search_dirs.append(Path(meipass) / "obspy" / "lib")
+                search_dirs.append(Path(meipass))
+            orig_libdir = Path(obspy_libnames.__file__).resolve().parent.parent.parent / "lib"
+            search_dirs.append(orig_libdir)
+
+            exts = list(importlib.machinery.EXTENSION_SUFFIXES)
+            for extra in (".so", ".pyd", ".dll", ".dylib"):
+                if extra not in exts:
+                    exts.append(extra)
+
+            for sdir in search_dirs:
+                if not sdir.exists():
+                    continue
+                for ext in exts:
+                    libpath = sdir / (name + ext)
+                    if libpath.exists():
+                        try:
+                            return ctypes.CDLL(str(libpath))
+                        except Exception:
+                            pass
+
+            return _orig_load_cdll(name)
+
+        obspy_libnames._load_cdll = _frozen_load_cdll
+    except Exception:
+        pass
+
+    try:
+        import obspy.core.util.base as obspy_base
+        import obspy.core.util.misc as obspy_misc
+
+        obspy_base.load_entry_point = _safe_load_entry_point
+        obspy_misc.load_entry_point = _safe_load_entry_point
+
+        if not obspy_base.ENTRY_POINTS.get("waveform"):
+            obspy_base.ENTRY_POINTS["waveform"] = obspy_base._get_ordered_entry_points(
+                "obspy.plugin.waveform", "readFormat", obspy_base.WAVEFORM_PREFERRED_ORDER
+            )
+            obspy_base.ENTRY_POINTS["waveform_write"] = obspy_base._get_ordered_entry_points(
+                "obspy.plugin.waveform", "writeFormat", obspy_base.WAVEFORM_PREFERRED_ORDER
+            )
+            obspy_base.ENTRY_POINTS["event"] = obspy_base._get_ordered_entry_points(
+                "obspy.plugin.event", "readFormat", obspy_base.EVENT_PREFERRED_ORDER
+            )
+            obspy_base.ENTRY_POINTS["event_write"] = obspy_base._get_entry_points(
+                "obspy.plugin.event", "writeFormat"
+            )
+    except Exception:
+        pass
+
 # Ensure obspy.imaging.cm has viridis colormaps registered
 try:
     import obspy.imaging.cm as obspy_cm
@@ -63,7 +155,7 @@ except Exception:  # noqa: BLE001, S110
 
 logger = logging.getLogger(__name__)
 
-__version__ = "3.0.0"
+__version__ = "3.0.1"
 
 
 import numpy as np
@@ -991,6 +1083,7 @@ class SeismicPickerQT(QMainWindow):
         self._scalo_cache = {}
         self._proc_cache = {}
         self._theo_cache = None
+        self._preferred_channel_group = None
 
         self._filter_timer = QTimer(self)
         self._filter_timer.setSingleShot(True)
@@ -1071,7 +1164,7 @@ class SeismicPickerQT(QMainWindow):
 
         # --- LEFT SIDEBAR: Navigation & Display ---
         left_group = QGroupBox()
-        left_group.setMinimumWidth(200)
+        left_group.setMinimumWidth(240)
         left_sidebar = QVBoxLayout()
 
         self.btn_open = QPushButton("Open Waveforms")
@@ -1098,6 +1191,9 @@ class SeismicPickerQT(QMainWindow):
         left_sidebar.addWidget(QLabel("<b>Station:</b>"))
         sta_layout = QHBoxLayout()
         self.sta_sel = QComboBox()
+        self.group_sel = QComboBox()
+        self.group_sel.setToolTip("Select channel group or event for current station")
+        self.group_sel.setVisible(False)
         self.sta_count_label = QLabel("0/0")
         self.sta_count_label.setStyleSheet("font-weight: bold; color: #2746ae;")
 
@@ -1106,7 +1202,8 @@ class SeismicPickerQT(QMainWindow):
         self.btn_remove_sta.setStyleSheet("background-color: #a2292b; color: white;")
         self.btn_remove_sta.clicked.connect(self.remove_current_station)
 
-        sta_layout.addWidget(self.sta_sel)
+        sta_layout.addWidget(self.sta_sel, 1)
+        sta_layout.addWidget(self.group_sel, 1)
         sta_layout.addWidget(self.sta_count_label)
         sta_layout.addWidget(self.btn_remove_sta)
         left_sidebar.addLayout(sta_layout)
@@ -1329,6 +1426,7 @@ class SeismicPickerQT(QMainWindow):
         self._connect_signals()
 
     def open_config_folder(self):
+        utils.sync_configuration()
         folder = utils.get_config_dir()
         if not utils.open_path_in_system(folder):
             QMessageBox.warning(
@@ -1340,7 +1438,8 @@ class SeismicPickerQT(QMainWindow):
     def _connect_signals(self):
         """Register events and UI updates."""
         self.view_mode.currentIndexChanged.connect(self._on_view_mode_changed)
-        self.sta_sel.currentIndexChanged.connect(lambda: self.update_plots(reset_zoom=True))
+        self.sta_sel.currentIndexChanged.connect(self._on_station_changed)
+        self.group_sel.currentIndexChanged.connect(self._on_group_changed)
         self.view_wave.toggled.connect(lambda: self.update_plots(reset_zoom=True))
         self.spec_scale.currentIndexChanged.connect(self.update_plots)
         self.color_mode.currentIndexChanged.connect(self.update_plots)
@@ -1411,6 +1510,52 @@ class SeismicPickerQT(QMainWindow):
             round(params.get("low_f", 1.0), 3),
             round(params.get("high_f", 20.0), 3),
         )
+        if not raw_st:
+            return Stream()
+
+        normalize = params.get("normalize", False)
+
+        if normalize:
+            # When normalizing, all traces of the same station and channel group
+            # must be processed together so they share the exact same normalization factor.
+            def _group_key(tr):
+                sta = (getattr(tr.stats, "station", "") or "").strip()
+                loc = (getattr(tr.stats, "location", "") or "").strip()
+                cha = (getattr(tr.stats, "channel", "") or "").strip().upper()
+                if len(cha) >= 2 and cha[-1] in "ZNE123RT":
+                    prefix = cha[:-1]
+                elif len(cha) == 1 and cha in "ZNE123RT":
+                    prefix = ""
+                else:
+                    prefix = cha[:2] if len(cha) >= 2 else cha
+                return (sta, loc, prefix)
+
+            groups = {}
+            for tr in raw_st:
+                gk = _group_key(tr)
+                groups.setdefault(gk, []).append(tr)
+
+            proc_traces = []
+            to_process = Stream()
+            for gk, tr_list in groups.items():
+                if all((self._trace_key(tr), p_key) in self._proc_cache for tr in tr_list):
+                    for tr in tr_list:
+                        proc_traces.append(self._proc_cache[(self._trace_key(tr), p_key)])
+                else:
+                    for tr in tr_list:
+                        to_process.append(tr)
+
+            if to_process:
+                new_proc = utils.apply_preprocessing(to_process, params)
+                for tr_raw, tr_proc in zip(to_process, new_proc):
+                    t_key = (self._trace_key(tr_raw), p_key)
+                    self._proc_cache[t_key] = tr_proc
+                    proc_traces.append(tr_proc)
+
+            proc_map = {self._trace_key(tr): tr for tr in proc_traces}
+            ordered = [proc_map[self._trace_key(tr)] for tr in raw_st if self._trace_key(tr) in proc_map]
+            return Stream(ordered)
+
         proc_traces = []
         to_process = Stream()
         for tr in raw_st:
@@ -1427,7 +1572,9 @@ class SeismicPickerQT(QMainWindow):
                 self._proc_cache[t_key] = tr_proc
                 proc_traces.append(tr_proc)
 
-        return Stream(proc_traces)
+        proc_map = {self._trace_key(tr): tr for tr in proc_traces}
+        ordered = [proc_map[self._trace_key(tr)] for tr in raw_st if self._trace_key(tr) in proc_map]
+        return Stream(ordered)
 
     def _on_view_mode_changed(self):
         self._sync_view_widgets()
@@ -1437,14 +1584,23 @@ class SeismicPickerQT(QMainWindow):
                 self.filt_sel.blockSignals(True)  # a single redraw, below
                 self.filt_sel.setCurrentIndex(idx)
                 self.filt_sel.blockSignals(False)
+        else:
+            idx = self.filt_sel.findText("None",
+            Qt.MatchFlag.MatchStartsWith)
+            if idx >= 0 and self.filt_sel.currentIndex() != idx:
+                self.filt_sel.blockSignals(True)
+                self.filt_sel.setCurrentIndex(idx)
+                self.filt_sel.blockSignals(False)
         self.update_plots(reset_zoom=True)
 
     def _sync_view_widgets(self):
         """Enable only the controls used by the current view mode."""
         detail = self.view_mode.currentText() == "Focus Mode"
+        all_stations = self.view_mode.currentText() == "All Stations"
         self.scalo_duration.setEnabled(detail)
         for w in (self.view_wave, self.view_spec, self.spec_scale):
             w.setEnabled(not detail)  # not used in Focus Mode
+        self.group_sel.setEnabled(not all_stations)
 
     def setup_shortcuts(self):
         """Map keyboard shortcuts based on config.json."""
@@ -1782,6 +1938,11 @@ class SeismicPickerQT(QMainWindow):
             self._theo_cache = None
             self._scalo_cache.clear()
             self.sta_sel.clear()
+            self.group_sel.blockSignals(True)
+            self.group_sel.clear()
+            self.group_sel.setVisible(False)
+            self.group_sel.blockSignals(False)
+            self._preferred_channel_group = None
             self.table.setRowCount(0)
             for p in self.plots:
                 try:
@@ -1810,6 +1971,7 @@ class SeismicPickerQT(QMainWindow):
             self.sta_sel.setCurrentIndex(target_idx)
             
         self.sta_sel.blockSignals(False)
+        self._update_group_selector()
 
         # Auto-fill missing station coordinates from configured FDSN client
         if self.original_stream:
@@ -1827,6 +1989,189 @@ class SeismicPickerQT(QMainWindow):
 
         self.update_plots(reset_zoom=True)
         self.update_table()
+
+    def _on_station_changed(self):
+        """Handle station change from the combo box."""
+        self._update_group_selector()
+        self.update_plots(reset_zoom=True)
+
+    def _on_group_changed(self):
+        """Handle group/event selection change."""
+        data = self.group_sel.currentData()
+        if data and isinstance(data, dict):
+            key = data.get("key")
+            if key and key != "all" and not str(key).startswith("ev_"):
+                self._preferred_channel_group = key
+        self.update_plots(reset_zoom=True)
+
+    def _analyze_station_groups(self, sta):
+        """Analyze traces for a station and return candidate selection groups.
+
+        Groups can be by instrumentation (channel prefixes, e.g. HH vs HN),
+        by events/recordings (different start times), or combined.
+        Returns a list of tuples: (display_label, data_dict).
+        """
+        traces = [tr for tr in self.original_stream if tr.stats.station == sta]
+        if not traces:
+            return []
+
+        if len(traces) <= 1:
+            return [("All (1 ch)", {"type": "all", "traces": traces, "key": "all"})]
+
+        # 1. Cluster traces into time windows / events
+        traces_sorted = sorted(traces, key=lambda tr: tr.stats.starttime)
+        time_clusters = []
+        for tr in traces_sorted:
+            placed = False
+            for cluster in time_clusters:
+                c_start = min(t.stats.starttime for t in cluster)
+                c_end = max(t.stats.endtime for t in cluster)
+                if abs(float(tr.stats.starttime - c_start)) < 30.0 or (c_start <= tr.stats.starttime <= c_end):
+                    cluster.append(tr)
+                    placed = True
+                    break
+            if not placed:
+                time_clusters.append([tr])
+
+        # 2. Analyze instrument / channel groups across traces
+        def _get_inst_key(tr):
+            loc = (getattr(tr.stats, "location", "") or "").strip()
+            cha = getattr(tr.stats, "channel", "")
+            prefix = cha[:2] if len(cha) >= 2 else cha
+            return f"{loc}.{prefix}" if loc else prefix
+
+        def _get_friendly_desc(inst_key):
+            core = inst_key.split(".")[-1].upper()
+            mapping = {
+                "HH": "Broadband",
+                "BH": "Broadband",
+                "LH": "Long Period",
+                "HN": "Strong Motion",
+                "EN": "Strong Motion",
+                "EH": "Short Period",
+                "SH": "Short Period",
+                "DP": "High Frequency",
+            }
+            return mapping.get(core, "")
+
+        items = []
+        total_ch = len(traces)
+        multi_events = len(time_clusters) > 1
+        all_inst_keys = set(_get_inst_key(tr) for tr in traces)
+        multi_inst = len(all_inst_keys) > 1
+
+        # If only 1 event and 1 instrument group and <= 3 traces:
+        if not multi_events and not multi_inst and total_ch <= 3:
+            return [("All", {"type": "all", "traces": traces, "key": "all"})]
+
+        # First option: All
+        if multi_events:
+            items.append((f"All Events ({total_ch} ch)", {"type": "all", "traces": traces, "key": "all"}))
+        else:
+            items.append((f"All Channels ({total_ch} ch)", {"type": "all", "traces": traces, "key": "all"}))
+
+        if multi_events and multi_inst:
+            for i, ev_traces in enumerate(time_clusters):
+                ev_time_str = ev_traces[0].stats.starttime.strftime("%Y-%m-%d %H:%M:%S")
+                ev_insts = {}
+                for tr in ev_traces:
+                    k = _get_inst_key(tr)
+                    ev_insts.setdefault(k, []).append(tr)
+
+                if len(ev_insts) > 1:
+                    items.append((
+                        f"Ev {i + 1}: {ev_time_str} (All {len(ev_traces)} ch)",
+                        {"type": "event", "traces": ev_traces, "key": f"ev_{i + 1}"}
+                    ))
+                    for k in sorted(ev_insts.keys()):
+                        desc = _get_friendly_desc(k)
+                        lbl = f"  └ {k} ({desc}, {len(ev_insts[k])} ch)" if desc else f"  └ {k} ({len(ev_insts[k])} ch)"
+                        items.append((lbl, {"type": "inst_event", "traces": ev_insts[k], "key": k}))
+                else:
+                    items.append((
+                        f"Ev {i + 1}: {ev_time_str} ({len(ev_traces)} ch)",
+                        {"type": "event", "traces": ev_traces, "key": f"ev_{i + 1}"}
+                    ))
+        elif multi_events:
+            for i, ev_traces in enumerate(time_clusters):
+                ev_time_str = ev_traces[0].stats.starttime.strftime("%Y-%m-%d %H:%M:%S")
+                items.append((
+                    f"Ev {i + 1}: {ev_time_str} ({len(ev_traces)} ch)",
+                    {"type": "event", "traces": ev_traces, "key": f"ev_{i + 1}"}
+                ))
+        elif multi_inst:
+            inst_dict = {}
+            for tr in traces:
+                k = _get_inst_key(tr)
+                inst_dict.setdefault(k, []).append(tr)
+            for k in sorted(inst_dict.keys()):
+                desc = _get_friendly_desc(k)
+                lbl = f"{k} ({desc}, {len(inst_dict[k])} ch)" if desc else f"{k} ({len(inst_dict[k])} ch)"
+                items.append((lbl, {"type": "inst", "traces": inst_dict[k], "key": k}))
+        else:
+            by_file = {}
+            for tr in traces:
+                fn = getattr(tr.stats, "filename", None) or tr.id
+                by_file.setdefault(fn, []).append(tr)
+            if len(by_file) > 1:
+                for idx, (fn, f_traces) in enumerate(by_file.items()):
+                    fname = Path(fn).name if fn else f"Group {idx + 1}"
+                    items.append((f"{fname} ({len(f_traces)} ch)", {"type": "file", "traces": f_traces, "key": f"file_{idx}"}))
+
+        return items
+
+    def _update_group_selector(self):
+        """Refresh the group/event selector for the current station."""
+        sta_idx = self.sta_sel.currentIndex()
+        if sta_idx < 0 or sta_idx >= len(self.stations):
+            self.group_sel.blockSignals(True)
+            self.group_sel.clear()
+            self.group_sel.setVisible(False)
+            self.group_sel.blockSignals(False)
+            return
+
+        sta = self.stations[sta_idx]["sta"]
+        items = self._analyze_station_groups(sta)
+
+        self.group_sel.blockSignals(True)
+        self.group_sel.clear()
+
+        if len(items) > 1:
+            for lbl, data in items:
+                self.group_sel.addItem(lbl, data)
+
+            self.group_sel.setVisible(True)
+            all_stations = self.view_mode.currentText() == "All Stations"
+            self.group_sel.setEnabled(not all_stations)
+
+            target_idx = 1
+            if self._preferred_channel_group:
+                for idx in range(1, self.group_sel.count()):
+                    d = self.group_sel.itemData(idx)
+                    if d and isinstance(d, dict) and d.get("key") == self._preferred_channel_group:
+                        target_idx = idx
+                        break
+            self.group_sel.setCurrentIndex(target_idx)
+        else:
+            if items:
+                self.group_sel.addItem(items[0][0], items[0][1])
+            self.group_sel.setVisible(False)
+
+        self.group_sel.blockSignals(False)
+
+    def _get_selected_station_stream(self, sta):
+        """Return the Stream of traces for `sta` respecting the active group_sel filter."""
+        all_traces = [tr for tr in self.original_stream if tr.stats.station == sta]
+        if not all_traces:
+            return Stream()
+
+        data = self.group_sel.currentData()
+        if data and isinstance(data, dict) and "traces" in data:
+            sel_traces = [tr for tr in data["traces"] if tr.stats.station == sta]
+            if sel_traces:
+                return Stream(sel_traces)
+
+        return Stream(all_traces)
 
     def prev_station(self):
         cur = self.sta_sel.currentIndex()
@@ -1908,7 +2253,7 @@ class SeismicPickerQT(QMainWindow):
             target_sta = [self.stations[sta_idx]["sta"]] if sta_idx >= 0 else []
             self.sta_count_label.setText(f"{sta_idx + 1}/{self.sta_sel.count()}")
             total_h = 300
-            raw_target_st = Stream([tr for tr in self.original_stream if tr.stats.station in target_sta])
+            raw_target_st = self._get_selected_station_stream(target_sta[0]) if target_sta else Stream()
             try:
                 proc_st = self._get_preprocessed_stream(raw_target_st, params)
             except Exception as exc:
@@ -2160,7 +2505,7 @@ class SeismicPickerQT(QMainWindow):
 
         # The whole station is preprocessed, so normalisation is shared between its
         # components as in the other modes. select() keeps the order, hence the zip.
-        raw_st = self.original_stream.select(station=sta)
+        raw_st = self._get_selected_station_stream(sta)
         raw_params = {
             "demean": params.get("demean", False),
             "detrend": params.get("detrend", False),
@@ -2534,7 +2879,14 @@ class SeismicPickerQT(QMainWindow):
                 p.pick_items = []
             sta = p.meta.get("sta")
             cha = p.meta.get("cha")
-            matched_tr = next((tr for tr in self.original_stream if tr.stats.station == sta and tr.stats.channel == cha), None)
+            st_time = p.meta.get("st")
+            matched_tr = next(
+                (tr for tr in self.original_stream
+                 if tr.stats.station == sta and tr.stats.channel == cha and (st_time is None or tr.stats.starttime == st_time)),
+                None,
+            )
+            if not matched_tr:
+                matched_tr = next((tr for tr in self.original_stream if tr.stats.station == sta and tr.stats.channel == cha), None)
             if matched_tr:
                 self._draw_picks(p, matched_tr, theo_arrs)
             
@@ -2625,6 +2977,40 @@ class SeismicPickerQT(QMainWindow):
             self.view_wave.setChecked(True)
         self.view_mode.setCurrentText("Single Station")
         self.sta_sel.setCurrentIndex(sta_idx)
+        self._update_group_selector()
+
+        # If pick has channel or time info, try to select the matching group in group_sel
+        pk_cha = pk.get("cha_source") or ""
+        pk_t = pk.get("abs_t")
+        if pk_cha and self.group_sel.count() > 1:
+            matched_group_idx = None
+            for g_i in range(1, self.group_sel.count()):
+                g_data = self.group_sel.itemData(g_i)
+                if g_data and isinstance(g_data, dict):
+                    traces = g_data.get("traces", [])
+                    if any(tr.stats.channel == pk_cha for tr in traces):
+                        if matched_group_idx is None:
+                            matched_group_idx = g_i
+                        if pk_t:
+                            try:
+                                t_obj = UTCDateTime(pk_t)
+                                if any(tr.stats.starttime <= t_obj <= tr.stats.endtime for tr in traces):
+                                    matched_group_idx = g_i
+                                    break
+                            except Exception:
+                                pass
+                        else:
+                            break
+            if matched_group_idx is not None:
+                self.group_sel.blockSignals(True)
+                self.group_sel.setCurrentIndex(matched_group_idx)
+                self.group_sel.blockSignals(False)
+                data = self.group_sel.currentData()
+                if data and isinstance(data, dict):
+                    key = data.get("key")
+                    if key and key != "all" and not str(key).startswith("ev_"):
+                        self._preferred_channel_group = key
+
         for w in widgets:
             w.blockSignals(False)
         self._sync_view_widgets()
@@ -2751,6 +3137,7 @@ class SeismicPickerQT(QMainWindow):
 
     def open_plugins_folder(self):
         """Open user plugins directory in file manager."""
+        utils.sync_configuration()
         p_dir = utils.get_plugins_dir()
         if not utils.open_path_in_system(p_dir):
             QMessageBox.warning(
@@ -2909,6 +3296,51 @@ class SeismicPickerQT(QMainWindow):
         about_box.exec()
 
 def main():
+    if "--test-frozen" in sys.argv or os.environ.get("PYPICKER_SELF_TEST") == "1":
+        print("PyPicker frozen self-test mode activated.")
+        from obspy.core.util.base import ENTRY_POINTS
+        waveform_plugins = list(ENTRY_POINTS.get("waveform", {}).keys())
+        print(f"Waveform plugins count: {len(waveform_plugins)}")
+        print(f"Waveform plugins: {waveform_plugins}")
+        assert "MSEED" in ENTRY_POINTS.get("waveform", {}), "MSEED not found in waveform entry points!"
+        assert "SAC" in ENTRY_POINTS.get("waveform", {}), "SAC not found in waveform entry points!"
+
+        import tempfile
+        from obspy import Stream, Trace
+        st = Stream(traces=[Trace(data=np.zeros(100, dtype=np.int32))])
+        st[0].stats.station = "TEST"
+        st[0].stats.channel = "HHZ"
+        st[0].stats.sampling_rate = 100.0
+
+        with tempfile.NamedTemporaryFile(suffix=".mseed", delete=False) as f:
+            mseed_file = f.name
+        try:
+            st.write(mseed_file, format="MSEED")
+            r_st = read(mseed_file)
+            assert len(r_st) == 1, "Failed to read MSEED stream"
+            print("Successfully wrote and read MSEED waveform.")
+        finally:
+            if os.path.exists(mseed_file):
+                os.remove(mseed_file)
+
+        with tempfile.NamedTemporaryFile(suffix=".sac", delete=False) as f:
+            sac_file = f.name
+        try:
+            st.write(sac_file, format="SAC")
+            r_st = read(sac_file)
+            assert len(r_st) == 1, "Failed to read SAC stream"
+            print("Successfully wrote and read SAC waveform.")
+        finally:
+            if os.path.exists(sac_file):
+                os.remove(sac_file)
+
+        import obspy.imaging.cm as obspy_cm
+        assert "viridis" in obspy_cm.__dict__, "viridis colormap missing!"
+        print("Colormap 'viridis' present in obspy.imaging.cm.")
+
+        print("ALL FROZEN SELF-TESTS PASSED SUCCESSFULLY!")
+        sys.exit(0)
+
     app = QApplication(sys.argv)
     app.setApplicationName("PyPicker")
     init_theme = "dark" if utils.detect_system_dark_mode() is not False else "light"

@@ -1,4 +1,4 @@
-import csv
+import csv  # noqa: EXE002
 import json
 import os
 import shutil
@@ -15,7 +15,7 @@ from obspy.taup import TauPyModel
 from PyQt6.QtCore import QStandardPaths
 from PyQt6.QtGui import QIcon
 
-__version__ = "3.0.0"
+__version__ = "3.0.1"
 
 APP_CONFIG_FOLDER = "PyPicker"
 
@@ -167,7 +167,7 @@ def detect_system_dark_mode():
         detected = darkdetect.theme()
         if detected:
             return detected.lower() == "dark"
-    except Exception:
+    except Exception:  # noqa: BLE001, S110
         pass
 
     # 2. Linux
@@ -197,7 +197,7 @@ def detect_system_dark_mode():
                     return True
                 elif "uint32 2" in val:
                     return False
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
         # b) GNOME / XDG gsettings
@@ -214,7 +214,7 @@ def detect_system_dark_mode():
                 return True
             elif "light" in res.stdout.lower():
                 return False
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
         try:
@@ -228,7 +228,7 @@ def detect_system_dark_mode():
             )
             if "-dark" in res.stdout.lower():
                 return True
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
         # c) KDE Plasma kdeglobals
@@ -242,7 +242,7 @@ def detect_system_dark_mode():
                             return True
                         elif "light" in line.lower():
                             return False
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
         # d) Desktop Environment Variables
@@ -264,11 +264,8 @@ def detect_system_dark_mode():
                 text=True,
                 timeout=0.5,
             )
-            if "dark" in res.stdout.lower():
-                return True
-            else:
-                return False
-        except Exception:
+            return "dark" in res.stdout.lower()
+        except Exception:  # noqa: BLE001
             return False
 
     # 4. Windows
@@ -282,7 +279,7 @@ def detect_system_dark_mode():
             val, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
             winreg.CloseKey(key)
             return val == 0
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
     return None
@@ -290,9 +287,10 @@ def detect_system_dark_mode():
 def open_path_in_system(target_path):
     """
     Open a file or directory using the operating system's default application or file manager.
-    Ensures directory exists and provides multi-tier fallbacks (QDesktopServices, xdg-open, os.startfile, open).
+    Ensures directory exists and provides multi-tier fallbacks (os.startfile, xdg-open with clean env, open, QDesktopServices).
     """
     import subprocess
+
     from PyQt6.QtCore import QUrl
     from PyQt6.QtGui import QDesktopServices
 
@@ -303,22 +301,47 @@ def open_path_in_system(target_path):
         else:
             path.mkdir(parents=True, exist_ok=True)
 
-    url = QUrl.fromLocalFile(str(path))
-    if QDesktopServices.openUrl(url):
-        return True
+    # Clean environment for external subprocess calls so child processes on Linux (xdg-open, file managers)
+    # do not inherit PyInstaller's LD_LIBRARY_PATH which causes glibc symbol conflicts.
+    clean_env = dict(os.environ)
+    if "LD_LIBRARY_PATH_ORIG" in clean_env:
+        clean_env["LD_LIBRARY_PATH"] = clean_env["LD_LIBRARY_PATH_ORIG"]
+    else:
+        clean_env.pop("LD_LIBRARY_PATH", None)
 
-    try:
-        if sys.platform.startswith("win"):
+    # 1. Windows: Native ShellExecuteW via os.startfile is the most reliable for both files and directories
+    if sys.platform.startswith("win"):
+        try:
             os.startfile(str(path))
             return True
-        elif sys.platform == "darwin":
+        except Exception:
+            pass
+
+    # 2. macOS: "open" command
+    elif sys.platform == "darwin":
+        try:
             subprocess.Popen(["open", str(path)])
             return True
-        else:
-            subprocess.Popen(["xdg-open", str(path)])
+        except Exception:
+            pass
+
+    # 3. Linux / Unix: "xdg-open" with sanitized LD_LIBRARY_PATH
+    else:
+        try:
+            subprocess.Popen(["xdg-open", str(path)], env=clean_env)
+            return True
+        except Exception:
+            pass
+
+    # 4. Fallback: QDesktopServices
+    try:
+        url = QUrl.fromLocalFile(str(path))
+        if QDesktopServices.openUrl(url):
             return True
     except Exception:
-        return False
+        pass
+
+    return False
 
 def get_system_desktop_dir():
     """
@@ -535,7 +558,7 @@ def apply_preprocessing(stream, params):
     Apply detrending, demeaning, and filtering to the ObsPy stream.
     """
     st = stream.copy()
-    dm, dt, norm, f = 0, 0, 0, 0
+    dm, dt, f = 0, 0, 0
 
     if params.get("demean"):
         st.detrend("demean")
@@ -546,35 +569,35 @@ def apply_preprocessing(stream, params):
     if params.get("normalize"):
         if dm != 1:
             st.detrend("demean")
+            dm = 1
         if dt != 1:
             st.detrend("linear")
-        st = normalize_traces(st, inplace=True)
-        norm = 1
+            dt = 1
 
     f_type = params.get("filter_type")
     low = params.get("low_f", 1.0)
     high = params.get("high_f", 20.0)
 
-    if f_type == "None" or not f_type:
-        if norm == 1:
-            st.taper(max_percentage=0.05, type="cosine")
-        return st
+    if f_type and f_type != "None":
+        try:
+            if "BandPass" in f_type and low < high:
+                st.filter("bandpass", freqmin=low, freqmax=high, zerophase=True)
+                f = 1
+            elif "LowPass" in f_type:
+                st.filter("lowpass", freq=high, zerophase=True)
+                f = 1
+            elif "HighPass" in f_type:
+                st.filter("highpass", freq=low, zerophase=True)
+                f = 1
+        except Exception as e:  # noqa: BLE001
+            print(f"Error while filtering: {e}")
 
-    try:
-        if "BandPass" in f_type and low < high:
-            st.filter("bandpass", freqmin=low, freqmax=high, zerophase=True)
-            f = 1
-        elif "LowPass" in f_type:
-            st.filter("lowpass", freq=high, zerophase=True)
-            f = 1
-        elif "HighPass" in f_type:
-            st.filter("highpass", freq=low, zerophase=True)
-            f = 1
-    except Exception as e:  # noqa: BLE001
-        print(f"Error while filtering: {e}")
-
-    if dm == 1 or dt == 1 or norm == 1 or f == 1:
+    if dm == 1 or dt == 1 or f == 1 or params.get("normalize"):
         st.taper(max_percentage=0.05, type="cosine")
+
+    if params.get("normalize"):
+        st = normalize_traces(st, inplace=True)
+
     return st
 
 def get_spectrum(trace):
@@ -939,7 +962,7 @@ def save_picks_to_sac(stream, picks):
         if "filename" in tr.stats and tr.stats.filename:
             try:
                 tr.write(tr.stats.filename, format="SAC")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 print(f"Error saving SAC file for {tr.id}: {e}")
 
 def export_to_quakeml(picks, filename):
@@ -1758,28 +1781,67 @@ def autofill_missing_station_coordinates(stream, inventory=None, client_name="IN
     return updated_count
 
 def normalize_traces(stream, inplace=False):
-    "Normalize stream traces."
+    """
+    Normalize stream traces.
 
+    Each 3-component set of traces for a given station and channel/instrument
+    is normalized by the shared maximum absolute amplitude among those traces,
+    preserving relative component amplitudes.
+    """
     from collections import defaultdict
-    
-    new_stream = stream if inplace else stream.copy()
-    station_max = defaultdict(float)
 
+    new_stream = stream if inplace else stream.copy()
+    if len(new_stream) == 0:
+        return new_stream
+
+    def _get_group_key(tr):
+        sta = (getattr(tr.stats, "station", "") or "").strip()
+        loc = (getattr(tr.stats, "location", "") or "").strip()
+        cha = (getattr(tr.stats, "channel", "") or "").strip().upper()
+        if len(cha) >= 2 and cha[-1] in "ZNE123RT":
+            chan_prefix = cha[:-1]
+        elif len(cha) == 1 and cha in "ZNE123RT":
+            chan_prefix = ""
+        else:
+            chan_prefix = cha[:2] if len(cha) >= 2 else cha
+        return (sta, loc, chan_prefix)
+
+    groups = defaultdict(list)
     for tr in new_stream:
-        station = tr.stats.station
-        d = tr.data[np.isfinite(tr.data)]
-        if d.size > 0:
-            trace_max = np.max(np.abs(d))
-            station_max[station] = max(station_max[station], trace_max)
-    
-    for tr in new_stream:
-        station = tr.stats.station
-        data_max = station_max.get(station, 1.0)
-        if data_max == 0:
-            data_max = 1.0
-        if len(tr.data) > 0:
-            tr.data = tr.data.astype(np.float64) / data_max
-    
+        base_key = _get_group_key(tr)
+        st_time = getattr(tr.stats, "starttime", None)
+
+        matched_cluster = None
+        for (b_key, cluster_idx), tr_list in groups.items():
+            if b_key == base_key and tr_list and st_time is not None:
+                c_start = min(t.stats.starttime for t in tr_list)
+                c_end = max(t.stats.endtime for t in tr_list)
+                if abs(float(st_time - c_start)) < 30.0 or (c_start <= st_time <= c_end):
+                    matched_cluster = (b_key, cluster_idx)
+                    break
+
+        if matched_cluster is not None:
+            groups[matched_cluster].append(tr)
+        else:
+            cluster_idx = sum(1 for (b, _) in groups if b == base_key)
+            groups[(base_key, cluster_idx)].append(tr)
+
+    for (base_key, cluster_idx), tr_list in groups.items():
+        group_max = 0.0
+        for tr in tr_list:
+            if tr.data is not None and len(tr.data) > 0:
+                d = tr.data[np.isfinite(tr.data)]
+                if d.size > 0:
+                    trace_max = float(np.max(np.abs(d)))
+                    group_max = max(group_max, trace_max)
+
+        if not np.isfinite(group_max) or group_max <= 0:
+            group_max = 1.0
+
+        for tr in tr_list:
+            if tr.data is not None and len(tr.data) > 0:
+                tr.data = tr.data.astype(np.float64) / group_max
+
     return new_stream
 
 def jet_colormap(n=256):
@@ -1900,7 +1962,7 @@ def get_default_catalog_path(cfg=None):
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(legacy_path, target)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
     return target

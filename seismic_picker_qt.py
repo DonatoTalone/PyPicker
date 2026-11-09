@@ -1137,6 +1137,9 @@ class SeismicPickerQT(QMainWindow):
         act_map = plugins_menu.addAction(f"&Geographic Map ({map_key})")  # ty: ignore[unresolved-attribute]
         act_map.triggered.connect(self.open_map_window)  # ty: ignore[unresolved-attribute]
 
+        act_sac = plugins_menu.addAction("&SAC Header Viewer")  # ty: ignore[unresolved-attribute]
+        act_sac.triggered.connect(self.open_sac_header_dialog)  # ty: ignore[unresolved-attribute]
+
         plugins_menu.addSeparator()  # ty: ignore[unresolved-attribute]
         act_open_plugins = plugins_menu.addAction("Open &Plugins Folder")  # ty: ignore[unresolved-attribute]
         act_open_plugins.triggered.connect(self.open_plugins_folder)  # ty: ignore[unresolved-attribute]
@@ -1952,6 +1955,15 @@ class SeismicPickerQT(QMainWindow):
             self.win.clear()  # ty: ignore[unresolved-attribute]
             self.plots = []
             self.update_plots(reset_zoom=True)
+            if hasattr(self, "_sac_header_dialog") and self._sac_header_dialog:
+                try:
+                    self._sac_header_dialog.update_stream(
+                        self.original_stream
+                    )
+                except Exception as e:
+                    logger.debug(
+                        f"Could not update SAC header viewer: {e}"
+                    )
 
     def _setup_after_load(self, target_idx=0):
         "Populate the station list after data loading"
@@ -1989,6 +2001,16 @@ class SeismicPickerQT(QMainWindow):
 
         self.update_plots(reset_zoom=True)
         self.update_table()
+
+        if hasattr(self, "_sac_header_dialog") and self._sac_header_dialog:
+            try:
+                self._sac_header_dialog.update_stream(
+                    self.original_stream
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.debug(
+                    f"Could not update SAC header viewer: {e}"
+                )
 
     def _on_station_changed(self):
         """Handle station change from the combo box."""
@@ -3260,6 +3282,46 @@ class SeismicPickerQT(QMainWindow):
         self._focmec_dialog.show()
         self._focmec_dialog.raise_()
         self._focmec_dialog.activateWindow()
+
+    def open_sac_header_dialog(self):
+        """Open or show the SAC header viewer."""
+
+        if not self.original_stream:
+            QMessageBox.warning(
+                self,
+                "No Data Loaded",
+                "Please load seismic waveforms first."
+            )
+            return
+
+        try:
+            try:
+                from config.plugins.sac_header_plugin import SACHeaderDialog
+            except ImportError:
+                try:
+                    from plugins.sac_header_plugin import SACHeaderDialog
+                except ImportError:
+                    from sac_header_plugin import SACHeaderDialog
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Plugin Error",
+                f"Failed to load SAC Header Viewer:\n\n{e}"
+            )
+            return
+
+        if not hasattr(self, "_sac_header_dialog") or self._sac_header_dialog is None:
+            self._sac_header_dialog = SACHeaderDialog(
+                stream=self.original_stream,
+                parent=self
+            )
+        else:
+            self._sac_header_dialog.update_stream(self.original_stream)
+
+        self._sac_header_dialog.show()
+        self._sac_header_dialog.raise_()
+        self._sac_header_dialog.activateWindow()
 
     def open_documentation_viewer(self, doc="README.md"):
         """Open or show the in-app documentation viewer dialog."""

@@ -33,6 +33,7 @@ DEFAULT_CONFIG = {
         "export_picks": "Ctrl+E",
         "import_picks": "Ctrl+I",
         "toggle_filter": "F",
+        "toggle_picks": "T",
         "pick_p": "1",
         "pick_s": "2",
         "localize": "L",
@@ -53,6 +54,7 @@ DEFAULT_CONFIG = {
         "filter_type": "BandPass (f1 and f2)",
         "velocity_model": "velocity_model.json",
         "show_theoretical_arrivals": False,
+        "show_picks": True,
         "picking_mode": "Popup",
         "station_client": "INGV",
         "map_dem_alpha": 0.4,
@@ -656,10 +658,14 @@ def parse_sac_phase_identification(raw_name, default_phase="P"):
     Parse a SAC arrival identification string (e.g. 'IPU', 'EPD', 'P+', 'P-', 'P')
     into (phase, onset, polarity).
     """
+    def_clean = (default_phase or "").strip() or "Custom"
     if not raw_name or raw_name == "-12345":
-        return default_phase, "Unknown", "undecidable"
+        return def_clean, "Unknown", "undecidable"
 
     s = raw_name.strip()
+    if not s or s == "-12345":
+        return def_clean, "Unknown", "undecidable"
+
     onset = "Unknown"
     polarity = "undecidable"
 
@@ -669,21 +675,22 @@ def parse_sac_phase_identification(raw_name, default_phase="P"):
         s = s[1:]
 
     # 2. Check polarity suffix (+, -, U, D, C)
-    if s.endswith(("+", "U", "u", "C", "c")):
+    if len(s) > 1 and s.endswith(("+", "U", "u", "C", "c")):
         polarity = "positive"
         s = s[:-1].rstrip("_")
-    elif s.endswith(("-", "D", "d")):
+    elif len(s) > 1 and s.endswith(("-", "D", "d")):
         polarity = "negative"
         s = s[:-1].rstrip("_")
 
-    phase = s.upper() if s else default_phase
+    phase = s.upper() if s else def_clean
     return phase, onset, polarity
 
 def format_sac_pick_name(phase, onset, polarity):
     """
     Format a standard SAC arrival identification string (e.g. 'IPU', 'EPD', 'P+', 'P').
     """
-    p = phase.upper() if phase else "P"
+    clean_phase = (phase or "").strip()
+    p = clean_phase.upper() if clean_phase else "CUSTOM"
     onset_char = ""
     if onset:
         ons_norm = normalize_onset(onset)
@@ -704,7 +711,7 @@ def format_sac_pick_name(phase, onset, polarity):
     if p in ("P", "S"):
         return f"{onset_char}{p}{pol_char}" if (onset_char or pol_char) else p
     else:
-        # For other phases like Pg, Sg
+        # For other phases like Pg, Sg, Custom
         if pol_char:
             return f"{p}{'+' if pol_char == 'U' else '-'}"[:8]
         return p[:8]
@@ -754,7 +761,11 @@ def apply_picks_to_stream_sac_headers(stream, picks):
         unc = float(pk.get("uncertainty", 0.0))
         pol = normalize_polarity(pk.get("polarity"))
         onset = normalize_onset(pk.get("onset"))
-        p_name = pk.get("phase", "").upper()
+        raw_phase = pk.get("phase", "")
+        clean_phase = (raw_phase or "").strip() if isinstance(raw_phase, str) else str(raw_phase or "").strip()
+        if not clean_phase:
+            clean_phase = "Custom"
+        p_name = clean_phase.upper()
         pick_time = UTCDateTime(pk["abs_t"])
 
         pol_val = 1.0 if pol == "positive" else (-1.0 if pol == "negative" else 0.0)
@@ -786,7 +797,7 @@ def apply_picks_to_stream_sac_headers(stream, picks):
             cur_idx = sta_other_idx.get(pk["sta"], 0) + 1
             sta_other_idx[pk["sta"]] = cur_idx
             if cur_idx <= 9:
-                label = format_sac_pick_name(p_name, onset, pol)
+                label = format_sac_pick_name(clean_phase, onset, pol)
                 for tr in target_traces:
                     if not hasattr(tr.stats, "sac"):
                         tr.stats.sac = {}
@@ -831,6 +842,8 @@ def extract_existing_picks(stream):
                     raw_name = def_phase
 
                 phase_name, onset, pol_from_name = parse_sac_phase_identification(raw_name, default_phase=def_phase)
+                if not phase_name or not phase_name.strip():
+                    phase_name = "Custom"
 
                 # Handle uncertainty; SAC uses -12345.0 as null
                 uncertainty = sac.get(err_key, 0.0)
@@ -876,10 +889,11 @@ def extract_picks_from_csv(filename):
         next(reader, None)  # skip header
         for row in reader:
             if len(row) >= 4:
+                ph = row[2].strip() if len(row) > 2 and row[2].strip() else "Custom"
                 pk = {
                     "sta": row[0],
                     "cha_source": row[1],
-                    "phase": row[2],
+                    "phase": ph,
                     "abs_t": row[3],
                     "uncertainty": float(row[4]) if len(row) > 4 else 0.0,
                     "polarity": normalize_polarity(row[5]) if len(row) > 5 else "undecidable",
@@ -900,10 +914,11 @@ def extract_picks_from_seisgram_pick(filename):
                 continue
             t0 = datetime.strptime(row[6] + row[7], "%Y%m%d%H%M")
             abs_t = t0 + timedelta(seconds=float(row[8]))
+            ph = row[4].strip() if len(row) > 4 and row[4].strip() else "Custom"
             pk = {
                 "sta": row[0],
                 "cha_source": row[2],
-                "phase": row[4],
+                "phase": ph,
                 "abs_t": abs_t.isoformat(timespec="milliseconds"),
                 "uncertainty": float(row[10]) if len(row) > 10 else 0.0,
                 "polarity": normalize_polarity(row[5]),
@@ -920,10 +935,11 @@ def extract_picks_from_quakeml(filename):
     picks = []
     for event in cat:
         for pick in event.picks:
+            ph = (pick.phase_hint or "").strip() or "Custom"
             pk = {
                 "sta": pick.waveform_id.station_code if pick.waveform_id else "",
                 "cha_source": pick.waveform_id.channel_code if pick.waveform_id else "",
-                "phase": pick.phase_hint if pick.phase_hint else "",
+                "phase": ph,
                 "abs_t": str(pick.time),
                 "uncertainty": pick.time_errors.uncertainty if pick.time_errors and pick.time_errors.uncertainty else 0.0,
                 "polarity": normalize_polarity(pick.polarity),
@@ -940,11 +956,12 @@ def export_to_csv(picks, filename):
         writer = csv.writer(f, delimiter=";")
         writer.writerow(["Station", "Channel", "Phase", "UTC_Time", "Uncertainty_sec", "Polarity", "Onset"])
         for p in picks:
+            ph = (p.get("phase") or "").strip() or "Custom"
             writer.writerow(
                 [
                     p["sta"],
                     p["cha_source"],
-                    p["phase"],
+                    ph,
                     p["abs_t"],
                     p.get("uncertainty", 0.0),
                     normalize_polarity(p.get("polarity", "undecidable")),
@@ -975,7 +992,7 @@ def export_to_quakeml(picks, filename):
         pick = Pick()
         pick.time = UTCDateTime(pk["abs_t"])
         pick.waveform_id = WaveformStreamID(station_code=pk["sta"], channel_code=pk["cha_source"])
-        pick.phase_hint = pk["phase"]
+        pick.phase_hint = (pk.get("phase") or "").strip() or "Custom"
         
         if pk.get("uncertainty", 0.0) > 0:
             pick.time_errors = {"uncertainty": pk["uncertainty"]}
@@ -1028,7 +1045,8 @@ def export_to_seisgram_pick(picks, filename):
             cmp = (str(p.get("cha_source", "?")).strip() or "?").ljust(4)
             onset = normalize_onset(p.get("onset"))
             ons_char = "i" if onset == "Impulsive" else ("e" if onset == "Emergent" else "?")
-            phase = str(p.get("phase", "?")).strip().ljust(6)
+            ph = (str(p.get("phase", "")).strip() or "Custom")
+            phase = ph.ljust(6)
             pol = normalize_polarity(p.get("polarity"))
             pol_char = "U" if pol == "positive" else ("D" if pol == "negative" else "?")
             date_str = t.strftime("%Y%m%d")
@@ -1067,7 +1085,8 @@ def extract_picks_from_nlloc(filename):
             sta = row[0]
             cmp = row[2] if len(row) > 2 else "?"
             onset = row[3] if len(row) > 3 else "?"
-            phase = row[4] if len(row) > 4 else "?"
+            raw_phase = row[4] if len(row) > 4 else "?"
+            phase = raw_phase.strip() if raw_phase.strip() not in ("?", "") else "Custom"
             polarity = row[5] if len(row) > 5 else "?"
 
             try:
@@ -1115,7 +1134,7 @@ def export_to_hypo71(picks, filename):
             continue
         if sta not in sta_picks:
             sta_picks[sta] = {}
-        p_name = pk.get("phase", "").upper()
+        p_name = (pk.get("phase") or "").strip().upper() or "CUSTOM"
         if p_name.startswith("P") and "P" not in sta_picks[sta]:
             sta_picks[sta]["P"] = pk
         elif p_name.startswith("S") and "S" not in sta_picks[sta]:
@@ -1354,11 +1373,10 @@ def reorder_stream_by_name(stream):
 
 def remove_pick_from_sac(stream, station, channel, phase_name):
     "Remove a specific pick from SAC headers of matching traces by setting them to -12345.0"
-    target_traces = stream.select(station=station, channel=channel)
-    if not target_traces:
-        target_traces = stream.select(station=station)
+    target_traces = stream.select(station=station)
 
-    p_name = phase_name.upper()
+    clean_phase = (phase_name or "").strip()
+    p_name = clean_phase.upper() if clean_phase else "CUSTOM"
     for tr in target_traces:
         if not hasattr(tr.stats, "sac"):
             continue
@@ -1390,7 +1408,11 @@ def remove_pick_from_sac(stream, station, channel, phase_name):
             kusr_key = f"kuser{i+1}" if i + 1 <= 2 else None
             kt_val = sac.get(name_key, "").strip().upper()
             kt_phase, _, _ = parse_sac_phase_identification(kt_val, default_phase=f"T{i}")
-            if kt_phase == p_name or kt_val == p_name:
+            if (
+                kt_phase == p_name
+                or kt_val == p_name
+                or (p_name == "CUSTOM" and (kt_phase in ("CUSTOM", f"T{i}") or kt_val in ("CUSTOM", f"T{i}", "-12345", "")))
+            ):
                 sac[t_key] = -12345.0
                 sac[name_key] = "-12345"
                 sac[err_key] = -12345.0
@@ -1983,6 +2005,127 @@ def calculate_focmec_quality(num_polarities, misfits, gap_deg):
         return "C"
     else:
         return "D"
+
+
+def cluster_station_traces(traces):
+    """
+    Cluster traces for a single seismic station into distinct events / recordings.
+
+    Ensures that:
+    1. A single event cluster never contains duplicate components for the same
+       location code (e.g. at most one HHZ, one HHN, one HHE).
+    2. Traces with distinct, non-empty SAC header 'kevnm' values are never merged.
+    3. Traces with SAC origin times differing by > 3.0 s are kept separate.
+    4. Components of the same instrument prefix (e.g. HH) must start within 5.0 s
+       to belong to the same event.
+    5. Different instrument prefixes (e.g. Broadband HH vs Strong Motion HN) can
+       belong to the same multi-instrument event if their time windows overlap
+       or start within 10.0 s and event metadata does not conflict.
+    """
+    if not traces:
+        return []
+    if len(traces) == 1:
+        return [[traces[0]]]
+
+    def _comp_key(tr):
+        loc = (getattr(tr.stats, "location", "") or "").strip()
+        cha = getattr(tr.stats, "channel", "")
+        return f"{loc}.{cha}" if loc else cha
+
+    def _inst_key(tr):
+        loc = (getattr(tr.stats, "location", "") or "").strip()
+        cha = getattr(tr.stats, "channel", "")
+        prefix = cha[:2] if len(cha) >= 2 else cha
+        return f"{loc}.{prefix}" if loc else prefix
+
+    def _get_ev_id(tr):
+        sac = getattr(tr.stats, "sac", {})
+        if hasattr(sac, "get"):
+            k = str(sac.get("kevnm", "")).strip()
+            if k and k not in ("-12345", "-12345.0", "None", ""):
+                return k
+        return None
+
+    def _get_sac_ot(tr):
+        sac = getattr(tr.stats, "sac", {})
+        if not hasattr(sac, "get"):
+            return None
+        try:
+            if "nzyear" in sac and "nzjday" in sac and sac.get("o") is not None:
+                o_val = float(sac["o"])
+                if o_val not in (-12345.0, -12345):
+                    return (
+                        UTCDateTime(
+                            year=int(sac["nzyear"]),
+                            julday=int(sac["nzjday"]),
+                            hour=int(sac.get("nzhour", 0)),
+                            minute=int(sac.get("nzmin", 0)),
+                            second=int(sac.get("nzsec", 0)),
+                            microsecond=int(sac.get("nzmsec", 0)) * 1000,
+                        )
+                        + o_val
+                    )
+        except Exception:  # noqa: BLE001
+            pass
+        return None
+
+    traces_sorted = sorted(traces, key=lambda tr: tr.stats.starttime)
+    time_clusters = []
+
+    for tr in traces_sorted:
+        c_tr_comp = _comp_key(tr)
+        c_tr_inst = _inst_key(tr)
+        c_tr_ev = _get_ev_id(tr)
+        c_tr_ot = _get_sac_ot(tr)
+
+        best_cluster = None
+        min_dt = float("inf")
+
+        for cluster in time_clusters:
+            # 1. Component collision check: never two of the same component in one event
+            cluster_comps = {_comp_key(t) for t in cluster}
+            if c_tr_comp in cluster_comps:
+                continue
+
+            # 2. Event ID check: distinct SAC 'kevnm' cannot belong to the same event
+            cluster_ev_ids = {_get_ev_id(t) for t in cluster if _get_ev_id(t) is not None}
+            if c_tr_ev is not None and cluster_ev_ids:
+                if c_tr_ev not in cluster_ev_ids:
+                    continue
+
+            # 3. SAC Origin Time check: differing origin times indicate separate events
+            if c_tr_ot is not None:
+                cluster_ots = [_get_sac_ot(t) for t in cluster if _get_sac_ot(t) is not None]
+                if any(abs(float(c_tr_ot - cot)) > 3.0 for cot in cluster_ots):
+                    continue
+
+            # 4. Instrument and Start Time Proximity check
+            c_start = min(t.stats.starttime for t in cluster)
+            c_end = max(t.stats.endtime for t in cluster)
+
+            same_inst_traces = [t for t in cluster if _inst_key(t) == c_tr_inst]
+            if same_inst_traces:
+                dt = min(abs(float(tr.stats.starttime - t.stats.starttime)) for t in same_inst_traces)
+                if dt > 5.0 and (c_tr_ev is None or not cluster_ev_ids):
+                    continue
+            else:
+                dt = abs(float(tr.stats.starttime - c_start))
+                if dt > 10.0 and not (c_start <= tr.stats.starttime <= c_end):
+                    if c_tr_ev is None or not cluster_ev_ids:
+                        continue
+
+            dt_from_start = abs(float(tr.stats.starttime - c_start))
+            if dt_from_start < min_dt:
+                min_dt = dt_from_start
+                best_cluster = cluster
+
+        if best_cluster is not None:
+            best_cluster.append(tr)
+        else:
+            time_clusters.append([tr])
+
+    time_clusters.sort(key=lambda cl: min(t.stats.starttime for t in cl))
+    return time_clusters
 
 
 def get_or_create_event_id(stream, picks=None, hypocenter=None):

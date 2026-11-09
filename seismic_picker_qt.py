@@ -210,6 +210,32 @@ from PyQt6.QtWidgets import (
 
 import picker_utils_qt as utils
 
+P_COLOR_PALETTE = [
+    "#2ecc71",  # Emerald Green (primary/default)
+    "#00cec9",  # Robin's Egg / Turquoise
+    "#20bf6b",  # Mint / Forest Green
+    "#78e08f",  # Light Sage Green
+    "#00b894",  # Jade
+    "#26de81",  # Neon Green
+]
+
+S_COLOR_PALETTE = [
+    "#e056fd",  # Magenta / Orchid (primary/default)
+    "#ff6b81",  # Watermelon / Coral Pink
+    "#9b59b6",  # Amethyst Purple
+    "#fd79a8",  # Soft Pink
+    "#be2edd",  # Deep Purple
+    "#f368e0",  # Vivid Pink
+]
+
+CUSTOM_COLOR_PALETTE = [
+    "#8e44ad",  # Purple (primary/default)
+    "#e67e22",  # Orange
+    "#3498db",  # Blue
+    "#d35400",  # Rust
+    "#1abc9c",  # Teal
+]
+
 
 class PickDetailsDialog(QDialog):
     def __init__(self, parent=None, default_phase="P", custom_phase=""):
@@ -225,6 +251,7 @@ class PickDetailsDialog(QDialog):
         
         self.custom_phase_le = QLineEdit()
         self.custom_phase_le.setText(custom_phase)
+        self.custom_phase_le.setPlaceholderText("Custom phase name (defaults to Custom)")
         self.custom_phase_le.setVisible(self.phase_cb.currentText() == "Custom")
         self.phase_cb.currentTextChanged.connect(
             lambda t: self.custom_phase_le.setVisible(t == "Custom")
@@ -254,7 +281,8 @@ class PickDetailsDialog(QDialog):
     def get_data(self):
         phase = self.phase_cb.currentText()
         if phase == "Custom":
-            phase = self.custom_phase_le.text()
+            txt = self.custom_phase_le.text().strip()
+            phase = txt if txt else "Custom"
         return {
             "phase": phase,
             "polarity": self.polarity_cb.currentText(),
@@ -1084,6 +1112,7 @@ class SeismicPickerQT(QMainWindow):
         self._proc_cache = {}
         self._theo_cache = None
         self._preferred_channel_group = None
+        self._preferred_event_key = None
 
         self._filter_timer = QTimer(self)
         self._filter_timer.setSingleShot(True)
@@ -1259,6 +1288,30 @@ class SeismicPickerQT(QMainWindow):
         )
         left_sidebar.addWidget(self.btn_reset)
 
+        # Phase Time Differences Panel
+        diff_group = QGroupBox("Phase Differences (Δt)")
+        diff_layout = QVBoxLayout()
+        diff_layout.setContentsMargins(4, 6, 4, 6)
+        diff_layout.setSpacing(4)
+
+        self.diff_mode_sel = QComboBox()
+        self.diff_mode_sel.addItems([
+            "By Station (S - P)",
+            "Network Summary",
+            "All Pairs (Network)",
+        ])
+        self.diff_mode_sel.currentIndexChanged.connect(self.update_phase_differences)
+        diff_layout.addWidget(self.diff_mode_sel)
+
+        self.phase_diff_text = QTextBrowser()
+        self.phase_diff_text.setReadOnly(True)
+        self.phase_diff_text.setMinimumHeight(130)
+        self.phase_diff_text.setPlaceholderText("No picks available.")
+        diff_layout.addWidget(self.phase_diff_text)
+
+        diff_group.setLayout(diff_layout)
+        left_sidebar.addWidget(diff_group)
+
         left_sidebar.addStretch()
 
         left_sidebar.addWidget(QLabel("<b>Sort Stations:</b>"))
@@ -1348,6 +1401,13 @@ class SeismicPickerQT(QMainWindow):
         default_mode = self.config.get("defaults", {}).get("picking_mode", "Popup")
         self.picking_mode_sel.setCurrentText(default_mode)
         right_sidebar.addWidget(self.picking_mode_sel)
+
+        right_sidebar.addWidget(QLabel("<b>Display:</b>"))
+        self.show_picks = QCheckBox("Show Picks")
+        default_show_picks = self.config.get("defaults", {}).get("show_picks", True)
+        self.show_picks.setChecked(default_show_picks)
+        self.show_picks.stateChanged.connect(self.update_pick_overlays)
+        right_sidebar.addWidget(self.show_picks)
 
         right_sidebar.addWidget(QLabel("<b>Theoretical:</b>"))
         self.show_theo = QCheckBox("Show Arrivals")
@@ -1621,6 +1681,7 @@ class SeismicPickerQT(QMainWindow):
             "export_picks": self.export_picks,
             "import_picks": self.import_picks,
             "toggle_filter": self.toggle_filter,
+            "toggle_picks": lambda: self.show_picks.setChecked(not self.show_picks.isChecked()),
             "pick_p": lambda: self.start_pick_from_shortcut("P"),
             "pick_s": lambda: self.start_pick_from_shortcut("S"),
             "localize": self.open_hypo71_dialog,
@@ -1783,6 +1844,9 @@ class SeismicPickerQT(QMainWindow):
         if hasattr(self, "plots") and self.plots:
             self.update_plots()
 
+        if hasattr(self, "phase_diff_text"):
+            self.update_phase_differences()
+
     def update_shortcuts_reminder(self):
         """Update shortcuts reminder box dynamically based on config.json."""
         sc_config = self.config.get("shortcuts", {})
@@ -1795,6 +1859,7 @@ class SeismicPickerQT(QMainWindow):
             "phase_s": "Select S",
             "phase_rotate": "Toggle P/S",
             "toggle_filter": "Toggle Filter",
+            "toggle_picks": "Toggle Picks",
             "reset_view": "Reset Zoom",
             "save_sac": "Save SAC",
             "export_csv": "Export Picks",
@@ -1875,8 +1940,15 @@ class SeismicPickerQT(QMainWindow):
                 self._proc_cache.clear()
                 self._theo_cache = None
                 self._scalo_cache.clear()
-                self.base_stream = new_st.copy()
-                self.original_stream = utils.reorder_stream_by_name(new_st)
+                dedup_st = Stream()
+                seen_keys = set()
+                for tr in new_st:
+                    k = self._trace_key(tr)
+                    if k not in seen_keys:
+                        seen_keys.add(k)
+                        dedup_st.append(tr)
+                self.base_stream = dedup_st.copy()
+                self.original_stream = utils.reorder_stream_by_name(dedup_st)
                 self.picks = utils.extract_existing_picks(self.original_stream)
                 self.current_event_id = utils.get_or_create_event_id(self.original_stream, picks=self.picks)
                 if hasattr(self, "sort_sel"):
@@ -1946,7 +2018,10 @@ class SeismicPickerQT(QMainWindow):
             self.group_sel.setVisible(False)
             self.group_sel.blockSignals(False)
             self._preferred_channel_group = None
+            self._preferred_event_key = None
             self.table.setRowCount(0)
+            if hasattr(self, "phase_diff_text"):
+                self.update_phase_differences()
             for p in self.plots:
                 try:
                     p.clear()
@@ -2016,14 +2091,19 @@ class SeismicPickerQT(QMainWindow):
         """Handle station change from the combo box."""
         self._update_group_selector()
         self.update_plots(reset_zoom=True)
+        if hasattr(self, "phase_diff_text"):
+            self.update_phase_differences()
 
     def _on_group_changed(self):
         """Handle group/event selection change."""
         data = self.group_sel.currentData()
         if data and isinstance(data, dict):
             key = data.get("key")
-            if key and key != "all" and not str(key).startswith("ev_"):
-                self._preferred_channel_group = key
+            if key and key != "all":
+                if str(key).startswith("ev_"):
+                    self._preferred_event_key = key
+                else:
+                    self._preferred_channel_group = key
         self.update_plots(reset_zoom=True)
 
     def _analyze_station_groups(self, sta):
@@ -2040,20 +2120,8 @@ class SeismicPickerQT(QMainWindow):
         if len(traces) <= 1:
             return [("All (1 ch)", {"type": "all", "traces": traces, "key": "all"})]
 
-        # 1. Cluster traces into time windows / events
-        traces_sorted = sorted(traces, key=lambda tr: tr.stats.starttime)
-        time_clusters = []
-        for tr in traces_sorted:
-            placed = False
-            for cluster in time_clusters:
-                c_start = min(t.stats.starttime for t in cluster)
-                c_end = max(t.stats.endtime for t in cluster)
-                if abs(float(tr.stats.starttime - c_start)) < 30.0 or (c_start <= tr.stats.starttime <= c_end):
-                    cluster.append(tr)
-                    placed = True
-                    break
-            if not placed:
-                time_clusters.append([tr])
+        # 1. Cluster traces into time windows / events using robust clustering
+        time_clusters = utils.cluster_station_traces(traces)
 
         # 2. Analyze instrument / channel groups across traces
         def _get_inst_key(tr):
@@ -2076,6 +2144,18 @@ class SeismicPickerQT(QMainWindow):
             }
             return mapping.get(core, "")
 
+        def _get_event_name_tag(ev_traces):
+            for tr in ev_traces:
+                sac = getattr(tr.stats, "sac", {})
+                if hasattr(sac, "get"):
+                    k = str(sac.get("kevnm", "")).strip()
+                    if k and k not in ("-12345", "-12345.0", "None", ""):
+                        sta_name = tr.stats.station
+                        core_name = k.split("_")[0] if ("_" in k and sta_name in k) else k
+                        if not core_name.startswith("EV_20"):
+                            return f" [{core_name}]"
+            return ""
+
         items = []
         total_ch = len(traces)
         multi_events = len(time_clusters) > 1
@@ -2095,6 +2175,7 @@ class SeismicPickerQT(QMainWindow):
         if multi_events and multi_inst:
             for i, ev_traces in enumerate(time_clusters):
                 ev_time_str = ev_traces[0].stats.starttime.strftime("%Y-%m-%d %H:%M:%S")
+                ev_tag = _get_event_name_tag(ev_traces)
                 ev_insts = {}
                 for tr in ev_traces:
                     k = _get_inst_key(tr)
@@ -2102,7 +2183,7 @@ class SeismicPickerQT(QMainWindow):
 
                 if len(ev_insts) > 1:
                     items.append((
-                        f"Ev {i + 1}: {ev_time_str} (All {len(ev_traces)} ch)",
+                        f"Ev {i + 1}{ev_tag}: {ev_time_str} (All {len(ev_traces)} ch)",
                         {"type": "event", "traces": ev_traces, "key": f"ev_{i + 1}"}
                     ))
                     for k in sorted(ev_insts.keys()):
@@ -2111,14 +2192,15 @@ class SeismicPickerQT(QMainWindow):
                         items.append((lbl, {"type": "inst_event", "traces": ev_insts[k], "key": k}))
                 else:
                     items.append((
-                        f"Ev {i + 1}: {ev_time_str} ({len(ev_traces)} ch)",
+                        f"Ev {i + 1}{ev_tag}: {ev_time_str} ({len(ev_traces)} ch)",
                         {"type": "event", "traces": ev_traces, "key": f"ev_{i + 1}"}
                     ))
         elif multi_events:
             for i, ev_traces in enumerate(time_clusters):
                 ev_time_str = ev_traces[0].stats.starttime.strftime("%Y-%m-%d %H:%M:%S")
+                ev_tag = _get_event_name_tag(ev_traces)
                 items.append((
-                    f"Ev {i + 1}: {ev_time_str} ({len(ev_traces)} ch)",
+                    f"Ev {i + 1}{ev_tag}: {ev_time_str} ({len(ev_traces)} ch)",
                     {"type": "event", "traces": ev_traces, "key": f"ev_{i + 1}"}
                 ))
         elif multi_inst:
@@ -2167,10 +2249,18 @@ class SeismicPickerQT(QMainWindow):
             self.group_sel.setEnabled(not all_stations)
 
             target_idx = 1
+            matched = False
             if self._preferred_channel_group:
                 for idx in range(1, self.group_sel.count()):
                     d = self.group_sel.itemData(idx)
                     if d and isinstance(d, dict) and d.get("key") == self._preferred_channel_group:
+                        target_idx = idx
+                        matched = True
+                        break
+            if not matched and getattr(self, "_preferred_event_key", None):
+                for idx in range(1, self.group_sel.count()):
+                    d = self.group_sel.itemData(idx)
+                    if d and isinstance(d, dict) and d.get("key") == self._preferred_event_key:
                         target_idx = idx
                         break
             self.group_sel.setCurrentIndex(target_idx)
@@ -2227,6 +2317,77 @@ class SeismicPickerQT(QMainWindow):
             )
             self.picks = [p for p in self.picks if p["sta"] != sta]
             self._setup_after_load(target_idx=idx)
+
+    def _sort_station_traces_grouped(self, sta_traces):
+        """Sort station traces into compact 3-component groups by event and instrument.
+
+        Clusters traces by event using utils.cluster_station_traces, groups by
+        instrument key (loc.prefix), prioritizes instruments (broadband before strong-motion),
+        and orders components (Z first, E second, N third).
+        """
+        if not sta_traces:
+            return []
+        traces_list = list(sta_traces)
+        if len(traces_list) <= 1:
+            return traces_list
+
+        def _get_inst_key(tr):
+            loc = (getattr(tr.stats, "location", "") or "").strip()
+            cha = getattr(tr.stats, "channel", "")
+            prefix = cha[:2] if len(cha) >= 2 else cha
+            return f"{loc}.{prefix}" if loc else prefix
+
+        def _inst_priority(inst_key):
+            core = inst_key.split(".")[-1].upper()
+            prio = {
+                "HH": 10,
+                "BH": 11,
+                "LH": 12,
+                "SH": 20,
+                "EH": 21,
+                "DP": 22,
+                "HN": 30,
+                "EN": 31,
+                "HG": 32,
+            }
+            for pfx, val in prio.items():
+                if core.startswith(pfx):
+                    return val
+            return 50
+
+        def _comp_order(tr):
+            comp = tr.stats.channel[-1].upper() if tr.stats.channel else ""
+            order_map = {
+                "Z": 0, "E": 1, "N": 2,
+                "3": 0, "2": 1, "1": 2,
+                "R": 1, "T": 2,
+            }
+            return order_map.get(comp, 9)
+
+        # 1. Cluster traces by event
+        time_clusters = utils.cluster_station_traces(traces_list)
+
+        result = []
+        for cluster in time_clusters:
+            # 2. Group traces in this event by instrument key
+            inst_dict = {}
+            for tr in cluster:
+                k = _get_inst_key(tr)
+                inst_dict.setdefault(k, []).append(tr)
+
+            # 3. Sort instrument keys by priority, then alphabetically
+            sorted_inst_keys = sorted(
+                inst_dict.keys(),
+                key=lambda k: (_inst_priority(k), k),
+            )
+
+            # 4. Within each instrument group, sort components Z, E, N
+            for k in sorted_inst_keys:
+                inst_traces = inst_dict[k]
+                sorted_inst_traces = sorted(inst_traces, key=_comp_order)
+                result.extend(sorted_inst_traces)
+
+        return result
 
     def rotate_phase(self):
         "Cycle between P-S phases"
@@ -2319,11 +2480,7 @@ class SeismicPickerQT(QMainWindow):
         current_row = 0
 
         for station in target_sta:
-            traces = sorted(
-                proc_st.select(station=station),
-                key=lambda x: x.stats.channel[-1],
-                reverse=True,
-            )
+            traces = self._sort_station_traces_grouped(proc_st.select(station=station))
             self.win.addItem(
                 pg.LabelItem(f"<b>STATION: {station}</b>", size="12pt", color=self.fg_color),
                 row=current_row,  # ty: ignore[unknown-argument]
@@ -2446,6 +2603,12 @@ class SeismicPickerQT(QMainWindow):
             times = tr.times()
             tr._cached_times = times
 
+        # Zero reference line
+        zero_pen = pg.mkPen(color=pg.mkColor(128, 128, 128, 90), width=1, style=Qt.PenStyle.DashLine)
+        zero_line = pg.InfiniteLine(pos=0, angle=0, pen=zero_pen)
+        zero_line.setZValue(-10)
+        p.addItem(zero_line)
+
         p.plot(
             times,
             tr.data,
@@ -2466,34 +2629,57 @@ class SeismicPickerQT(QMainWindow):
         "Existing picks and theoretical arrivals of `tr` on plot `p`"
         dur = tr.stats.npts * tr.stats.delta
 
+        y_max = 1.0
+        if hasattr(p, "viewRange"):
+            try:
+                vr = p.viewRange()
+                if len(vr) > 1 and len(vr[1]) > 1:
+                    y_max = float(vr[1][1])
+            except Exception:  # noqa: BLE001
+                y_max = 1.0
+        y_pick = y_max * 0.82
+        y_theo = y_max * 0.62
+
+        # Group picks on this station to assign varied colors for duplicate phase types
+        sta_picks = [pk for pk in self.picks if pk.get("sta") == tr.stats.station]
+        sta_picks_sorted = sorted(sta_picks, key=lambda k: k.get("abs_t", ""))
+
+        p_picks = [pk for pk in sta_picks_sorted if (pk.get("phase") or "").strip().upper().startswith("P")]
+        s_picks = [pk for pk in sta_picks_sorted if (pk.get("phase") or "").strip().upper().startswith("S")]
+        other_picks = [pk for pk in sta_picks_sorted if pk not in p_picks and pk not in s_picks]
+
+        p_colors = {}
+        for i, pk in enumerate(p_picks):
+            p_colors[id(pk)] = P_COLOR_PALETTE[i % len(P_COLOR_PALETTE)]
+
+        s_colors = {}
+        for i, pk in enumerate(s_picks):
+            s_colors[id(pk)] = S_COLOR_PALETTE[i % len(S_COLOR_PALETTE)]
+
+        other_colors = {}
+        for i, pk in enumerate(other_picks):
+            other_colors[id(pk)] = CUSTOM_COLOR_PALETTE[i % len(CUSTOM_COLOR_PALETTE)]
+
         # Draw existing picks
-        for pk in self.picks:
-            if pk["sta"] == tr.stats.station:
-                t_rel = UTCDateTime(pk["abs_t"]) - tr.stats.starttime
-                if 0 <= t_rel <= dur:
-                    self._add_visual_pick(
-                        p, t_rel, pk["phase"], pk.get("uncertainty", 0.0)
-                    )
+        if not hasattr(self, "show_picks") or self.show_picks.isChecked():
+            for pk in self.picks:
+                if pk["sta"] == tr.stats.station:
+                    t_rel = UTCDateTime(pk["abs_t"]) - tr.stats.starttime
+                    if 0 <= t_rel <= dur:
+                        color = p_colors.get(id(pk)) or s_colors.get(id(pk)) or other_colors.get(id(pk))
+                        self._add_visual_pick(
+                            p, t_rel, pk.get("phase") or "Custom", pk.get("uncertainty", 0.0), color=color, y_pos=y_pick
+                        )
 
         # Draw theoretical arrivals
         if tr.stats.station in theo_arrs:
-            y_max = 1.0
-            if hasattr(p, "viewRange"):
-                try:
-                    vr = p.viewRange()
-                    if len(vr) > 1 and len(vr[1]) > 1:
-                        y_max = float(vr[1][1])
-                except Exception:  # noqa: BLE001
-                    y_max = 1.0
-            y_theo = y_max * 0.65
-
             for ph, arr_time in theo_arrs[tr.stats.station].items():
                 t_rel = arr_time - tr.stats.starttime
                 if 0 <= t_rel <= dur:
                     ph_u = ph.upper()
-                    if "P" in ph_u:
+                    if ph_u.startswith("P"):
                         t_col = QColor(46, 204, 113, 140)  # Muted picked P emerald green
-                    elif "S" in ph_u:
+                    elif ph_u.startswith("S"):
                         t_col = QColor(224, 86, 253, 140)  # Muted picked S magenta
                     else:
                         t_col = QColor(142, 68, 173, 140)  # Muted other pick purple
@@ -2650,7 +2836,8 @@ class SeismicPickerQT(QMainWindow):
 
         phase = self.ph_sel.currentText()
         if phase == "Custom":
-            phase = self.ph_custom.text()
+            txt = self.ph_custom.text().strip()
+            phase = txt if txt else "Custom"
 
         self.current_picking_data = {
             "sta": target_p.meta["sta"],
@@ -2690,10 +2877,16 @@ class SeismicPickerQT(QMainWindow):
             self.current_picking_data["uncertainty"] = round(unc, 4)  # ty: ignore[invalid-assignment]
             
             if self.picking_mode_sel.currentText() == "Popup":
+                cur_phase = self.current_picking_data.get("phase", "P")
+                cust_init = ""
+                if cur_phase not in ["P", "S"]:
+                    cust_init = "" if cur_phase == "Custom" else cur_phase
+                elif self.ph_sel.currentText() == "Custom":
+                    cust_init = self.ph_custom.text().strip()
                 dialog = PickDetailsDialog(
                     self, 
-                    default_phase=self.current_picking_data["phase"],  # ty: ignore[not-subscriptable]
-                    custom_phase=self.ph_custom.text()
+                    default_phase=cur_phase,
+                    custom_phase=cust_init
                 )
                 if dialog.exec():
                     data = dialog.get_data()
@@ -2727,16 +2920,16 @@ class SeismicPickerQT(QMainWindow):
             for item in self.active_pick_items:
                 item.setRegion(new_region)
 
-    def _add_visual_pick(self, plot, x_pos, label, uncertainty=0.0, color=None, style=Qt.PenStyle.DashLine, y_pos=0):
+    def _add_visual_pick(self, plot, x_pos, label, uncertainty=0.0, color=None, style=Qt.PenStyle.DashLine, y_pos=None):
         c_cfg = self.config.get("colors", {})
         
         if color:
             main_color = color
         else:
-            lbl_up = label.upper()
-            if "P" in lbl_up:
+            lbl_clean = label.upper().replace("(THEO)", "").strip()
+            if lbl_clean.startswith("P"):
                 main_color = "#2ecc71" 
-            elif "S" in lbl_up:
+            elif lbl_clean.startswith("S"):
                 main_color = "magenta" 
             else:
                 main_color = c_cfg.get("pick_line", "#8e44ad")
@@ -2762,6 +2955,17 @@ class SeismicPickerQT(QMainWindow):
         plot.addItem(line)
         items.append(line)
         
+        if y_pos is None:
+            y_max = 1.0
+            if hasattr(plot, "viewRange"):
+                try:
+                    vr = plot.viewRange()
+                    if len(vr) > 1 and len(vr[1]) > 1:
+                        y_max = float(vr[1][1])
+                except Exception:
+                    y_max = 1.0
+            y_pos = y_max * 0.82
+
         text = pg.TextItem(label, color=main_color, anchor=(0, 1))
         font = QFont()
         font.setBold(True)
@@ -2827,6 +3031,8 @@ class SeismicPickerQT(QMainWindow):
             
         self.table.blockSignals(False)
         self.table.setSortingEnabled(True)
+        if hasattr(self, "phase_diff_text"):
+            self.update_phase_differences()
 
     def _on_pick_polarity_changed(self, pk, row, val):
         norm_val = utils.normalize_polarity(val)
@@ -2911,7 +3117,199 @@ class SeismicPickerQT(QMainWindow):
                 matched_tr = next((tr for tr in self.original_stream if tr.stats.station == sta and tr.stats.channel == cha), None)
             if matched_tr:
                 self._draw_picks(p, matched_tr, theo_arrs)
-            
+
+    def update_phase_differences(self):
+        """Update the Phase Time Differences (Δt) display panel."""
+        if not hasattr(self, "phase_diff_text") or not hasattr(self, "diff_mode_sel"):
+            return
+
+        if not self.picks:
+            self.phase_diff_text.setHtml("<span style='color: gray;'><i>No picks available.</i></span>")
+            return
+
+        mode = self.diff_mode_sel.currentText()
+
+        def _get_utc(pk):
+            try:
+                return UTCDateTime(pk["abs_t"])
+            except Exception:
+                return None
+
+        is_dark = getattr(self, "fg_color", "#000000") == "#ffffff"
+        head_color = "#5dade2" if is_dark else "#2746ae"
+        hl_color = "#f39c12" if is_dark else "#d35400"
+        sec_color = "#2ecc71" if is_dark else "#27ae60"
+
+        if mode == "Network Summary":
+            html = ["<div style='font-family: sans-serif; font-size: 11px;'>"]
+            html.append(f"<b style='color: {head_color};'>=== NETWORK SUMMARY ===</b><br>")
+
+            # 1. S - P across all stations
+            sta_picks = {}
+            for pk in self.picks:
+                sta = pk.get("sta")
+                if sta and _get_utc(pk):
+                    sta_picks.setdefault(sta, []).append(pk)
+
+            sp_results = []
+            for sta, pks in sta_picks.items():
+                p_pks = [p for p in pks if (p.get("phase") or "").strip().upper().startswith("P")]
+                s_pks = [p for p in pks if (p.get("phase") or "").strip().upper().startswith("S")]
+                if p_pks and s_pks:
+                    p_first = min(p_pks, key=lambda x: _get_utc(x))
+                    s_first = min(s_pks, key=lambda x: _get_utc(x))
+                    dt_sp = float(_get_utc(s_first) - _get_utc(p_first))
+                    sp_results.append((sta, dt_sp, p_first.get("phase"), s_first.get("phase")))
+
+            html.append(f"<br><b style='color: {hl_color};'>S - P Times:</b><br>")
+            if sp_results:
+                sp_sorted = sorted(sp_results, key=lambda x: x[1])
+                min_sta, min_sp, min_p, min_s = sp_sorted[0]
+                max_sta, max_sp, max_p, max_s = sp_sorted[-1]
+
+                html.append(f"&nbsp;• <b>Min S-P:</b> <code>{min_sp:.3f} s</code> ({min_sta})<br>")
+                html.append(f"&nbsp;• <b>Max S-P:</b> <code>{max_sp:.3f} s</code> ({max_sta})<br>")
+                if len(sp_sorted) > 1:
+                    html.append(f"&nbsp;• <b>Range:</b> <code>{(max_sp - min_sp):.3f} s</code><br>")
+
+                html.append("<br><b>Station S-P List:</b><br>")
+                for sta, dt_sp, p_ph, s_ph in sp_sorted:
+                    html.append(f"&nbsp;&nbsp;<b>{sta}:</b> <code>{dt_sp:.3f} s</code> ({s_ph}-{p_ph})<br>")
+            else:
+                html.append("&nbsp;<i>No stations with both P and S picks.</i><br>")
+
+            # 2. Maximum Phase Differences across network (Δt_max per phase)
+            html.append(f"<br><b style='color: {sec_color};'>Phase Travel Time Spans (Δt_max):</b><br>")
+            phase_groups = {}
+            for pk in self.picks:
+                ph = (pk.get("phase") or "Custom").strip()
+                t = _get_utc(pk)
+                sta = pk.get("sta")
+                if ph and t and sta:
+                    phase_groups.setdefault(ph, []).append((sta, t, pk))
+
+            has_phase_span = False
+            for ph in sorted(phase_groups.keys()):
+                entries = phase_groups[ph]
+                sta_earliest = {}
+                for sta, t, pk in entries:
+                    if sta not in sta_earliest or t < sta_earliest[sta][0]:
+                        sta_earliest[sta] = (t, pk)
+
+                if len(sta_earliest) >= 2:
+                    has_phase_span = True
+                    sorted_stas = sorted(sta_earliest.items(), key=lambda item: item[1][0])
+                    first_sta, (first_t, _) = sorted_stas[0]
+                    last_sta, (last_t, _) = sorted_stas[-1]
+                    dt_max = float(last_t - first_t)
+
+                    t1_str = first_t.strftime("%H:%M:%S.%f")[:-3]
+                    t2_str = last_t.strftime("%H:%M:%S.%f")[:-3]
+
+                    html.append(f"&nbsp;<b>{ph}</b> ({len(sta_earliest)} stas):<br>")
+                    html.append(f"&nbsp;&nbsp;• <b>Δt_max:</b> <code>{dt_max:.3f} s</code><br>")
+                    html.append(f"&nbsp;&nbsp;• First: {first_sta} ({t1_str})<br>")
+                    html.append(f"&nbsp;&nbsp;• Last:&nbsp; {last_sta} ({t2_str})<br>")
+                elif len(sta_earliest) == 1:
+                    first_sta, (first_t, _) = list(sta_earliest.items())[0]
+                    t1_str = first_t.strftime("%H:%M:%S.%f")[:-3]
+                    html.append(f"&nbsp;<b>{ph}</b> (1 sta): {first_sta} ({t1_str})<br>")
+
+            if not has_phase_span and not any(len(g) == 1 for g in phase_groups.values()):
+                html.append("&nbsp;<i>Need picks on ≥ 2 stations to calculate spans.</i><br>")
+
+            html.append("</div>")
+            self.phase_diff_text.setHtml("".join(html))
+
+        elif mode == "All Pairs (Network)":
+            html = ["<div style='font-family: sans-serif; font-size: 11px;'>"]
+            html.append(f"<b style='color: {head_color};'>=== ALL PICKS (TIMELINE) ===</b><br>")
+
+            valid_picks = [p for p in self.picks if _get_utc(p)]
+            if not valid_picks:
+                html.append("<i>No valid pick times.</i></div>")
+                self.phase_diff_text.setHtml("".join(html))
+                return
+
+            sorted_picks = sorted(valid_picks, key=lambda p: _get_utc(p))
+            t_ref = _get_utc(sorted_picks[0])
+            ref_str = t_ref.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            html.append(f"<small>Reference: {ref_str}</small><br><br>")
+
+            for i, pk in enumerate(sorted_picks):
+                t_pk = _get_utc(pk)
+                dt = float(t_pk - t_ref)
+                sta = pk.get("sta", "")
+                ph = pk.get("phase", "")
+                cha = pk.get("cha_source", "")
+                time_str = t_pk.strftime("%H:%M:%S.%f")[:-3]
+                if i == 0:
+                    html.append(f"<b>+0.000 s:</b> {sta}.{cha} <b>{ph}</b> [ref]<br>")
+                else:
+                    html.append(f"<b>+{dt:.3f} s:</b> {sta}.{cha} <b>{ph}</b> ({time_str})<br>")
+
+            html.append("</div>")
+            self.phase_diff_text.setHtml("".join(html))
+
+        else:  # "By Station (S - P)" (default)
+            html = ["<div style='font-family: sans-serif; font-size: 11px;'>"]
+            html.append(f"<b style='color: {head_color};'>=== PICKS BY STATION ===</b><br>")
+
+            sta_picks = {}
+            for pk in self.picks:
+                sta = pk.get("sta")
+                if sta and _get_utc(pk):
+                    sta_picks.setdefault(sta, []).append(pk)
+
+            if not sta_picks:
+                html.append("<i>No valid picks.</i></div>")
+                self.phase_diff_text.setHtml("".join(html))
+                return
+
+            current_sta = None
+            if 0 <= self.sta_sel.currentIndex() < len(self.stations):
+                current_sta = self.stations[self.sta_sel.currentIndex()]["sta"]
+
+            all_stas = sorted(sta_picks.keys())
+            if current_sta and current_sta in all_stas:
+                all_stas.remove(current_sta)
+                ordered_stas = [current_sta] + all_stas
+            else:
+                ordered_stas = all_stas
+
+            for sta in ordered_stas:
+                pks = sorted(sta_picks[sta], key=lambda p: _get_utc(p))
+                is_curr = (sta == current_sta)
+                prefix = "▶ " if is_curr else ""
+                curr_tag = f" <span style='color: {hl_color};'>[Current]</span>" if is_curr else ""
+                html.append(f"<br><b style='color: {head_color};'>{prefix}STATION: {sta}</b>{curr_tag} ({len(pks)} picks)<br>")
+
+                p_pks = [p for p in pks if (p.get("phase") or "").strip().upper().startswith("P")]
+                s_pks = [p for p in pks if (p.get("phase") or "").strip().upper().startswith("S")]
+                if p_pks and s_pks:
+                    dt_sp = float(_get_utc(s_pks[0]) - _get_utc(p_pks[0]))
+                    p_name = p_pks[0].get("phase")
+                    s_name = s_pks[0].get("phase")
+                    html.append(f"&nbsp;• <b style='color: {hl_color};'>{s_name} - {p_name}:</b> <code>{dt_sp:.3f} s</code><br>")
+
+                if len(pks) >= 2:
+                    html.append("&nbsp;<b>Pairwise Δt:</b><br>")
+                    for i in range(len(pks)):
+                        for j in range(i + 1, len(pks)):
+                            p1 = pks[i]
+                            p2 = pks[j]
+                            dt = float(_get_utc(p2) - _get_utc(p1))
+                            ph1 = p1.get("phase", "?")
+                            ph2 = p2.get("phase", "?")
+                            html.append(f"&nbsp;&nbsp;{ph2} - {ph1}: <code>{dt:.3f} s</code><br>")
+                else:
+                    pk = pks[0]
+                    t_str = _get_utc(pk).strftime("%H:%M:%S.%f")[:-3]
+                    html.append(f"&nbsp;• {pk.get('phase')}: {t_str} (single pick)<br>")
+
+            html.append("</div>")
+            self.phase_diff_text.setHtml("".join(html))
+
     def on_table_cell_changed(self, row, col):
         """Apply changes made in the table to the corresponding pick data."""
         pk_idx = self._pick_index_from_row(row)
@@ -2929,7 +3327,7 @@ class SeismicPickerQT(QMainWindow):
             elif col == 1:    # Colonna 1: Canale (Cha)
                 pk["cha_source"] = new_text
             if col == 2:    # Colonna 2: Fase (Phase)
-                pk["phase"] = new_text
+                pk["phase"] = new_text if new_text else "Custom"
             elif col == 3 or col == 4:    # Colonna 3 (Data) o Colonna 4 (Ora)
                 current_abs = pk["abs_t"]
                 if 'T' in current_abs:
@@ -2958,6 +3356,8 @@ class SeismicPickerQT(QMainWindow):
                 pk["onset"] = utils.normalize_onset(new_text)
 
             self.update_pick_overlays()
+            if hasattr(self, "phase_diff_text"):
+                self.update_phase_differences()
         except Exception as e:  # noqa: BLE001
             print(f"Error in the format: {e}")
             self.update_table()      

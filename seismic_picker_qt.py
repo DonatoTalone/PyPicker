@@ -1,8 +1,9 @@
 import logging  # noqa: EXE002
+import os
 import re
 import sys
+from itertools import zip_longest
 from pathlib import Path
-import os
 
 # Ensure script and plugin directories are in sys.path for local module resolution
 _app_dir = str(Path(__file__).resolve().parent)
@@ -56,7 +57,7 @@ if getattr(sys, "frozen", False):
         def _safe_ep_load(self, *args, **kwargs):
             try:
                 return self.resolve()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 return _orig_ep_load(self, *args, **kwargs)
 
         pkg_resources.EntryPoint.load = _safe_ep_load
@@ -68,19 +69,20 @@ if getattr(sys, "frozen", False):
                 ep = pkg_resources.get_entry_info(dist, group, name)
                 if ep is not None:
                     return ep.resolve()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110
                 pass
             if _orig_load_ep:
                 return _orig_load_ep(dist, group, name)
             raise ImportError(f"Cannot load entry point {group}:{name} from {dist}")
 
-        pkg_resources.load_entry_point = _safe_load_entry_point
-    except Exception:
+        pkg_resources.load_entry_point = _safe_load_entry_point  # ty: ignore[invalid-assignment]
+    except Exception:  # noqa: BLE001, S110
         pass
 
     try:
         import ctypes
         import importlib
+
         import obspy.core.util.libnames as obspy_libnames
 
         _orig_load_cdll = obspy_libnames._load_cdll
@@ -94,7 +96,7 @@ if getattr(sys, "frozen", False):
             orig_libdir = Path(obspy_libnames.__file__).resolve().parent.parent.parent / "lib"
             search_dirs.append(orig_libdir)
 
-            exts = list(importlib.machinery.EXTENSION_SUFFIXES)
+            exts = list(importlib.machinery.EXTENSION_SUFFIXES)  # ty: ignore[possibly-missing-submodule]
             for extra in (".so", ".pyd", ".dll", ".dylib"):
                 if extra not in exts:
                     exts.append(extra)
@@ -107,21 +109,21 @@ if getattr(sys, "frozen", False):
                     if libpath.exists():
                         try:
                             return ctypes.CDLL(str(libpath))
-                        except Exception:
+                        except Exception:  # noqa: BLE001, S110
                             pass
 
             return _orig_load_cdll(name)
 
-        obspy_libnames._load_cdll = _frozen_load_cdll
-    except Exception:
+        obspy_libnames._load_cdll = _frozen_load_cdll  # ty: ignore[invalid-assignment]
+    except Exception:  # noqa: BLE001, S110
         pass
 
     try:
         import obspy.core.util.base as obspy_base
         import obspy.core.util.misc as obspy_misc
 
-        obspy_base.load_entry_point = _safe_load_entry_point
-        obspy_misc.load_entry_point = _safe_load_entry_point
+        obspy_base.load_entry_point = _safe_load_entry_point  # ty: ignore[unresolved-attribute]
+        obspy_misc.load_entry_point = _safe_load_entry_point  # ty: ignore[invalid-assignment]
 
         if not obspy_base.ENTRY_POINTS.get("waveform"):
             obspy_base.ENTRY_POINTS["waveform"] = obspy_base._get_ordered_entry_points(
@@ -136,7 +138,7 @@ if getattr(sys, "frozen", False):
             obspy_base.ENTRY_POINTS["event_write"] = obspy_base._get_entry_points(
                 "obspy.plugin.event", "writeFormat"
             )
-    except Exception:
+    except Exception:  # noqa: BLE001, S110
         pass
 
 # Ensure obspy.imaging.cm has viridis colormaps registered
@@ -211,29 +213,29 @@ from PyQt6.QtWidgets import (
 import picker_utils_qt as utils
 
 P_COLOR_PALETTE = [
-    "#2ecc71",  # Emerald Green (primary/default)
-    "#00cec9",  # Robin's Egg / Turquoise
-    "#20bf6b",  # Mint / Forest Green
-    "#78e08f",  # Light Sage Green
-    "#00b894",  # Jade
-    "#26de81",  # Neon Green
+    "#2ecc71",
+    "#a0ffb4",
+    "#19eeaa",
+    "#16ba63",
+    "#237c61",
+    "#0b5409",
 ]
 
 S_COLOR_PALETTE = [
-    "#e056fd",  # Magenta / Orchid (primary/default)
-    "#ff6b81",  # Watermelon / Coral Pink
-    "#9b59b6",  # Amethyst Purple
-    "#fd79a8",  # Soft Pink
-    "#be2edd",  # Deep Purple
-    "#f368e0",  # Vivid Pink
+    "#e056fd",
+    "#f1a9e8",
+    "#fb86af",
+    "#ff6b81",
+    "#a02bbb",
+    "#460b5d",
 ]
 
 CUSTOM_COLOR_PALETTE = [
-    "#8e44ad",  # Purple (primary/default)
-    "#e67e22",  # Orange
-    "#3498db",  # Blue
-    "#d35400",  # Rust
-    "#1abc9c",  # Teal
+    "#948a3b",
+    "#9b6f2e",
+    "#846c2a",
+    "#5e490e",
+    "#394508",
 ]
 
 
@@ -520,13 +522,13 @@ class Hypo71Dialog(QDialog):
             return
 
         try:
-            from hypo71_plugin import run_hypo71_localization  # ty: ignore[unresolved-import]
+            from hypo71_plugin import run_hypo71_localization  # ty: ignore[import-not-found]
         except ImportError:
             try:
                 from config.plugins.hypo71_plugin import run_hypo71_localization
             except ImportError:
                 try:
-                    from plugins.hypo71_plugin import run_hypo71_localization  # ty: ignore[unresolved-import]
+                    from plugins.hypo71_plugin import run_hypo71_localization  # ty: ignore[import-not-found]
                 except ImportError as e:
                     QMessageBox.critical(self, "Plugin Error", f"Could not import hypo71_plugin: {e}")
                     return
@@ -1166,7 +1168,8 @@ class SeismicPickerQT(QMainWindow):
         act_map = plugins_menu.addAction(f"&Geographic Map ({map_key})")  # ty: ignore[unresolved-attribute]
         act_map.triggered.connect(self.open_map_window)  # ty: ignore[unresolved-attribute]
 
-        act_sac = plugins_menu.addAction("&SAC Header Viewer")  # ty: ignore[unresolved-attribute]
+        act_key = self.config.get("shortcuts", {}).get("open_header", "H")
+        act_sac = plugins_menu.addAction(f"&SAC Header Viewer ({act_key})")  # ty: ignore[unresolved-attribute]
         act_sac.triggered.connect(self.open_sac_header_dialog)  # ty: ignore[unresolved-attribute]
 
         plugins_menu.addSeparator()  # ty: ignore[unresolved-attribute]
@@ -1687,6 +1690,7 @@ class SeismicPickerQT(QMainWindow):
             "localize": self.open_hypo71_dialog,
             "focmec": self.open_focmec_dialog,
             "open_map": self.open_map_window,
+            "open_header": self.open_sac_header_dialog,
             "help_doc": lambda: self.open_documentation_viewer("README.md"),
         }
 
@@ -1868,6 +1872,7 @@ class SeismicPickerQT(QMainWindow):
             "localize": "Hypo71 Location",
             "focmec": "Focal Mechanism (FOCMEC)",
             "open_map": "Geographic Map",
+            "open_header": "SAC Header",
             "help_doc": "Documentation",
         }
         items = []
@@ -1877,10 +1882,29 @@ class SeismicPickerQT(QMainWindow):
                 items.append(f"<b>{val}</b>: {desc}")
         
         if items:
-            text = "<br>".join(items)
+            mid = (len(items) + 1) // 2
+            left_column = items[:mid]
+            right_column = items[mid:]
+
+            rows = []
+            for left, right in zip_longest(
+                left_column, right_column, fillvalue=""):
+                rows.append(
+                    f"<tr>"
+                    f"<td width='50%' valign='top'>{left}</td>"
+                    f"<td width='50%' valign='top'>{right}</td>"
+                    f"</tr>"
+                )
+
+            text = (
+                "<table width='100%' cellspacing='6' cellpadding='2'>"
+                + "".join(rows)
+                + "</table>"
+            )
         else:
             text = "<i>No shortcuts configured</i>"
-            
+
+        self.shortcuts_label.setWordWrap(True)
         self.shortcuts_label.setText(text)
 
     def _trace_key(self, tr):
@@ -2035,7 +2059,7 @@ class SeismicPickerQT(QMainWindow):
                     self._sac_header_dialog.update_stream(
                         self.original_stream
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001
                     logger.debug(
                         f"Could not update SAC header viewer: {e}"
                     )
@@ -2159,7 +2183,7 @@ class SeismicPickerQT(QMainWindow):
         items = []
         total_ch = len(traces)
         multi_events = len(time_clusters) > 1
-        all_inst_keys = set(_get_inst_key(tr) for tr in traces)
+        all_inst_keys = {_get_inst_key(tr) for tr in traces}
         multi_inst = len(all_inst_keys) > 1
 
         # If only 1 event and 1 instrument group and <= 3 traces:
@@ -2637,8 +2661,8 @@ class SeismicPickerQT(QMainWindow):
                     y_max = float(vr[1][1])
             except Exception:  # noqa: BLE001
                 y_max = 1.0
-        y_pick = y_max * 0.82
-        y_theo = y_max * 0.62
+        y_pick = y_max * 0.70
+        y_theo = y_max * 0.50
 
         # Group picks on this station to assign varied colors for duplicate phase types
         sta_picks = [pk for pk in self.picks if pk.get("sta") == tr.stats.station]
@@ -2877,7 +2901,7 @@ class SeismicPickerQT(QMainWindow):
             self.current_picking_data["uncertainty"] = round(unc, 4)  # ty: ignore[invalid-assignment]
             
             if self.picking_mode_sel.currentText() == "Popup":
-                cur_phase = self.current_picking_data.get("phase", "P")
+                cur_phase = self.current_picking_data.get("phase", "P")  # ty: ignore[unresolved-attribute]
                 cust_init = ""
                 if cur_phase not in ["P", "S"]:
                     cust_init = "" if cur_phase == "Custom" else cur_phase
@@ -2962,7 +2986,7 @@ class SeismicPickerQT(QMainWindow):
                     vr = plot.viewRange()
                     if len(vr) > 1 and len(vr[1]) > 1:
                         y_max = float(vr[1][1])
-                except Exception:
+                except Exception:  # noqa: BLE001
                     y_max = 1.0
             y_pos = y_max * 0.82
 
@@ -3110,7 +3134,7 @@ class SeismicPickerQT(QMainWindow):
             st_time = p.meta.get("st")
             matched_tr = next(
                 (tr for tr in self.original_stream
-                 if tr.stats.station == sta and tr.stats.channel == cha and (st_time is None or tr.stats.starttime == st_time)),
+                if tr.stats.station == sta and tr.stats.channel == cha and (st_time is None or tr.stats.starttime == st_time)),
                 None,
             )
             if not matched_tr:
@@ -3132,7 +3156,7 @@ class SeismicPickerQT(QMainWindow):
         def _get_utc(pk):
             try:
                 return UTCDateTime(pk["abs_t"])
-            except Exception:
+            except Exception:  # noqa: BLE001
                 return None
 
         is_dark = getattr(self, "fg_color", "#000000") == "#ffffff"
@@ -3164,8 +3188,8 @@ class SeismicPickerQT(QMainWindow):
             html.append(f"<br><b style='color: {hl_color};'>S - P Times:</b><br>")
             if sp_results:
                 sp_sorted = sorted(sp_results, key=lambda x: x[1])
-                min_sta, min_sp, min_p, min_s = sp_sorted[0]
-                max_sta, max_sp, max_p, max_s = sp_sorted[-1]
+                min_sta, min_sp, _, _ = sp_sorted[0]
+                max_sta, max_sp, _, _ = sp_sorted[-1]
 
                 html.append(f"&nbsp;• <b>Min S-P:</b> <code>{min_sp:.3f} s</code> ({min_sta})<br>")
                 html.append(f"&nbsp;• <b>Max S-P:</b> <code>{max_sp:.3f} s</code> ({max_sta})<br>")
@@ -3211,7 +3235,7 @@ class SeismicPickerQT(QMainWindow):
                     html.append(f"&nbsp;&nbsp;• First: {first_sta} ({t1_str})<br>")
                     html.append(f"&nbsp;&nbsp;• Last:&nbsp; {last_sta} ({t2_str})<br>")
                 elif len(sta_earliest) == 1:
-                    first_sta, (first_t, _) = list(sta_earliest.items())[0]
+                    first_sta, (first_t, _) = next(iter(sta_earliest.items()))
                     t1_str = first_t.strftime("%H:%M:%S.%f")[:-3]
                     html.append(f"&nbsp;<b>{ph}</b> (1 sta): {first_sta} ({t1_str})<br>")
 
@@ -3270,42 +3294,32 @@ class SeismicPickerQT(QMainWindow):
             if 0 <= self.sta_sel.currentIndex() < len(self.stations):
                 current_sta = self.stations[self.sta_sel.currentIndex()]["sta"]
 
-            all_stas = sorted(sta_picks.keys())
-            if current_sta and current_sta in all_stas:
-                all_stas.remove(current_sta)
-                ordered_stas = [current_sta] + all_stas
+            prefix = "▶ "
+            curr_tag = f" <span style='color: {hl_color};'>[Current]</span>"
+            pks = sorted(sta_picks[current_sta], key=lambda p: _get_utc(p))
+            html.append(f"<br><b style='color: {head_color};'>{prefix}STATION: {current_sta}</b>{curr_tag} ({len(pks)} picks)<br>")
+            p_pks = [p for p in pks if (p.get("phase") or "").strip().upper().startswith("P")]
+            s_pks = [p for p in pks if (p.get("phase") or "").strip().upper().startswith("S")]
+            if p_pks and s_pks:
+                dt_sp = float(_get_utc(s_pks[0]) - _get_utc(p_pks[0]))
+                p_name = p_pks[0].get("phase")
+                s_name = s_pks[0].get("phase")
+                html.append(f"&nbsp;• <b style='color: {hl_color};'>{s_name} - {p_name}:</b> <code>{dt_sp:.3f} s</code><br>")
+
+            if len(pks) >= 2:
+                html.append("&nbsp;<b>Pairwise Δt:</b><br>")
+                for i in range(len(pks)):
+                    for j in range(i + 1, len(pks)):
+                        p1 = pks[i]
+                        p2 = pks[j]
+                        dt = float(_get_utc(p2) - _get_utc(p1))
+                        ph1 = p1.get("phase", "?")
+                        ph2 = p2.get("phase", "?")
+                        html.append(f"&nbsp;&nbsp;{ph2} - {ph1}: <code>{dt:.3f} s</code><br>")
             else:
-                ordered_stas = all_stas
-
-            for sta in ordered_stas:
-                pks = sorted(sta_picks[sta], key=lambda p: _get_utc(p))
-                is_curr = (sta == current_sta)
-                prefix = "▶ " if is_curr else ""
-                curr_tag = f" <span style='color: {hl_color};'>[Current]</span>" if is_curr else ""
-                html.append(f"<br><b style='color: {head_color};'>{prefix}STATION: {sta}</b>{curr_tag} ({len(pks)} picks)<br>")
-
-                p_pks = [p for p in pks if (p.get("phase") or "").strip().upper().startswith("P")]
-                s_pks = [p for p in pks if (p.get("phase") or "").strip().upper().startswith("S")]
-                if p_pks and s_pks:
-                    dt_sp = float(_get_utc(s_pks[0]) - _get_utc(p_pks[0]))
-                    p_name = p_pks[0].get("phase")
-                    s_name = s_pks[0].get("phase")
-                    html.append(f"&nbsp;• <b style='color: {hl_color};'>{s_name} - {p_name}:</b> <code>{dt_sp:.3f} s</code><br>")
-
-                if len(pks) >= 2:
-                    html.append("&nbsp;<b>Pairwise Δt:</b><br>")
-                    for i in range(len(pks)):
-                        for j in range(i + 1, len(pks)):
-                            p1 = pks[i]
-                            p2 = pks[j]
-                            dt = float(_get_utc(p2) - _get_utc(p1))
-                            ph1 = p1.get("phase", "?")
-                            ph2 = p2.get("phase", "?")
-                            html.append(f"&nbsp;&nbsp;{ph2} - {ph1}: <code>{dt:.3f} s</code><br>")
-                else:
-                    pk = pks[0]
-                    t_str = _get_utc(pk).strftime("%H:%M:%S.%f")[:-3]
-                    html.append(f"&nbsp;• {pk.get('phase')}: {t_str} (single pick)<br>")
+                pk = pks[0]
+                t_str = _get_utc(pk).strftime("%H:%M:%S.%f")[:-3]
+                html.append(f"&nbsp;• {pk.get('phase')}: {t_str} (single pick)<br>")
 
             html.append("</div>")
             self.phase_diff_text.setHtml("".join(html))
@@ -3419,7 +3433,7 @@ class SeismicPickerQT(QMainWindow):
                                 if any(tr.stats.starttime <= t_obj <= tr.stats.endtime for tr in traces):
                                     matched_group_idx = g_i
                                     break
-                            except Exception:
+                            except Exception:  # noqa: BLE001, S110
                                 pass
                         else:
                             break
@@ -3518,7 +3532,7 @@ class SeismicPickerQT(QMainWindow):
                         path += ".pha"
                     utils.export_to_hypo71(self.picks, path)
                 elif "quakeml" in filt_lower or path_lower.endswith((".qml", ".xml")):
-                    if not (path_lower.endswith(".qml") or path_lower.endswith(".xml")):
+                    if not (path_lower.endswith((".qml", ".xml"))):
                         path += ".qml"
                     utils.export_to_quakeml(self.picks, path)
                 else:
@@ -3617,9 +3631,9 @@ class SeismicPickerQT(QMainWindow):
                 from config.plugins.map_plugin import MapDialog
             except ImportError:
                 try:
-                    from plugins.map_plugin import MapDialog  # ty: ignore[unresolved-import]
+                    from plugins.map_plugin import MapDialog  # ty: ignore[import-not-found]
                 except ImportError:
-                    import map_plugin  # ty: ignore[unresolved-import]
+                    import map_plugin  # ty: ignore[import-not-found]
                     MapDialog = map_plugin.MapDialog
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(
@@ -3662,9 +3676,9 @@ class SeismicPickerQT(QMainWindow):
                 from config.plugins.focmec_plugin import FocmecDialog
             except ImportError:
                 try:
-                    from plugins.focmec_plugin import FocmecDialog  # ty: ignore[unresolved-import]
+                    from plugins.focmec_plugin import FocmecDialog  # ty: ignore[import-not-found]
                 except ImportError:
-                    import focmec_plugin  # ty: ignore[unresolved-import]
+                    import focmec_plugin  # ty: ignore[import-not-found]
                     FocmecDialog = focmec_plugin.FocmecDialog
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(
@@ -3699,11 +3713,11 @@ class SeismicPickerQT(QMainWindow):
                 from config.plugins.sac_header_plugin import SACHeaderDialog
             except ImportError:
                 try:
-                    from plugins.sac_header_plugin import SACHeaderDialog
+                    from plugins.sac_header_plugin import SACHeaderDialog  # ty: ignore[import-not-found]
                 except ImportError:
-                    from sac_header_plugin import SACHeaderDialog
+                    from sac_header_plugin import SACHeaderDialog  # ty: ignore[import-not-found]
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             QMessageBox.critical(
                 self,
                 "Plugin Error",
@@ -3768,6 +3782,7 @@ def main():
         assert "SAC" in ENTRY_POINTS.get("waveform", {}), "SAC not found in waveform entry points!"
 
         import tempfile
+
         from obspy import Stream, Trace
         st = Stream(traces=[Trace(data=np.zeros(100, dtype=np.int32))])
         st[0].stats.station = "TEST"

@@ -37,7 +37,7 @@
 - **Focal Mechanism Inversion (FOCMEC)**: Solve for double-couple fault planes (Strike, Dip, Rake), kinematic P/T axes, and tectonic regime using P-wave polarities via grid search, with interactive beachball stereonet display and CSV export.
 - **Coherent Theoretical Arrivals**: Shared 1D velocity structure between Hypo71 and ObsPy TauP theoretical arrival curves.
 - **Interactive Geographic Map**: Cartopy-powered map with DEM relief, transparency control, FDSN station inventory (INGV), and live epicenter tracking.
-- **Protected File Writing**: Save relocated SAC files with `_hypo71` suffix into `h71_localized/` without modifying original files.
+- **SAC Header Editor**: Visualize and modify the SAC header in table format.
 - **Pick Import & Export**: Full compatibility with CSV, QuakeML, and SeisGram2K `.pick` formats.
 - **Customizable Environment**: Configurable shortcuts and colors via persistent user configuration (`~/.config/PyPicker/`).
 
@@ -54,7 +54,7 @@ Standalone packages and system packages are available on [GitHub Releases](https
 ### 2. Install from Source
 
 ```bash
-git clone --branch dev https://github.com/DonatoTalone/PyPicker.git
+git clone https://github.com/DonatoTalone/PyPicker.git
 cd PyPicker
 
 python -m venv .venv
@@ -85,8 +85,10 @@ Shortcuts can be customized in `~/.config/PyPicker/config.json`.
 | `Q` | Toggle between P and S |
 | `R` | Reset zoom / pan |
 | `F` | Toggle filtering on / off |
+| `T` | Toggle picking visible / not visible |
 | `L` | Open Hypo71 Earthquake Location dialog |
 | `M` | Open Geographic Map (DEM, stations & epicenter) |
+| `H` | Open the SAC header |
 | `Ctrl+S` | Save picks to SAC headers |
 | `Ctrl+E` | Export picks (CSV / QuakeML) |
 

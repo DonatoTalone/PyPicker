@@ -254,7 +254,7 @@ class MapDialog(QDialog):
         new_ymin = ydata - new_height * (1.0 - rel_y)
         new_ymax = ydata + new_height * rel_y
 
-        self.ax.set_extent([new_xmin, new_xmax, new_ymin, new_ymax], crs=ccrs.PlateCarree())
+        self.ax.set_extent([new_xmin, new_xmax, new_ymin, new_ymax], crs=ccrs.PlateCarree())  # ty: ignore[unresolved-attribute]
         self.canvas.draw_idle()
 
     def update_stream(self, stream):
@@ -328,7 +328,7 @@ class MapDialog(QDialog):
         prev_extent = None
         if not initial and hasattr(self, "ax") and self.ax is not None:
             try:
-                prev_extent = self.ax.get_extent(crs=ccrs.PlateCarree())
+                prev_extent = self.ax.get_extent(crs=ccrs.PlateCarree())  # ty: ignore[unresolved-attribute]
             except Exception:  # noqa: BLE001
                 prev_extent = None
 
@@ -363,7 +363,7 @@ class MapDialog(QDialog):
                 # Default extent: Italy and Central Mediterranean
                 extent = [6.0, 19.5, 35.5, 47.5]
 
-        self.ax.set_extent(extent, crs=ccrs.PlateCarree())
+        self.ax.set_extent(extent, crs=ccrs.PlateCarree())  # ty: ignore[unresolved-attribute]
 
         # Layer 1: DEM Relief
         if self.show_dem:
@@ -381,36 +381,36 @@ class MapDialog(QDialog):
                 else:
                     zoom = 11
 
-                self.ax.add_image(self.tile_provider, zoom, alpha=self.dem_alpha)
+                self.ax.add_image(self.tile_provider, zoom, alpha=self.dem_alpha)  # ty: ignore[invalid-argument-type, too-many-positional-arguments, unknown-argument]
             except Exception as e:  # noqa: BLE001
                 logger.debug(f"Tile provider unavailable ({e}), using Natural Earth stock image.")
                 try:
-                    self.ax.stock_img()
+                    self.ax.stock_img()  # ty: ignore[unresolved-attribute]
                 except Exception:  # noqa: BLE001, S110
                     pass
 
         # Layer 2: Vector geographic features
         try:
             feat_scale = "50m" if abs(extent[1] - extent[0]) > 6 else "10m"
-            self.ax.add_feature(
+            self.ax.add_feature(  # ty: ignore[unresolved-attribute]
                 cfeature.OCEAN.with_scale(feat_scale),
                 facecolor="#d4e6f1",
                 alpha=0.35,
                 zorder=2,
             )
-            self.ax.add_feature(
+            self.ax.add_feature(  # ty: ignore[unresolved-attribute]
                 cfeature.LAKES.with_scale(feat_scale),
                 facecolor="#d4e6f1",
                 alpha=0.45,
                 zorder=2,
             )
-            self.ax.add_feature(
+            self.ax.add_feature(  # ty: ignore[unresolved-attribute]
                 cfeature.COASTLINE.with_scale(feat_scale),
                 edgecolor="#2c3e50",
                 linewidth=0.8,
                 zorder=3,
             )
-            self.ax.add_feature(
+            self.ax.add_feature(  # ty: ignore[unresolved-attribute]
                 cfeature.BORDERS.with_scale(feat_scale),
                 linestyle=":",
                 edgecolor="#34495e",
@@ -422,7 +422,7 @@ class MapDialog(QDialog):
 
         # Layer 3: Gridlines
         try:
-            gl = self.ax.gridlines(
+            gl = self.ax.gridlines(  # ty: ignore[unresolved-attribute]
                 draw_labels=True,
                 linewidth=0.5,
                 color="gray",

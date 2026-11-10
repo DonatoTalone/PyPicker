@@ -1,19 +1,20 @@
 """
 Plugin for earthquake location using hypo71py in PyPicker.
 Bridges PyPicker picks and ObsPy Stream SAC headers to hypo71py solver.
-"""
+"""  # noqa: EXE002
 
-from copy import deepcopy
+import sys
 from pathlib import Path
+
 import numpy as np
 from obspy import UTCDateTime
 
-import sys
 _plugins_dir = str(Path(__file__).resolve().parent)
 if _plugins_dir not in sys.path:
     sys.path.insert(0, _plugins_dir)
 
-from hypo71py import SINGLE, Station, CrustalVelocityModel, PhasePick
+# pyrefly: ignore[missing-import]
+from hypo71py import SINGLE, CrustalVelocityModel, PhasePick, Station  # ty: ignore[import-not-found]
 
 
 def extract_stations_and_picks(stream, picks):
@@ -184,14 +185,14 @@ def run_hypo71_localization(
         earliest_t = None
         earliest_sta = None
         for sta, phases in pick_dict.items():
-            for ph, p_obj in phases.items():
+            for p_obj in phases.values():
                 if earliest_t is None or p_obj.datetime < earliest_t:
                     earliest_t = p_obj.datetime
                     earliest_sta = sta
 
         nearest_stat = next(s for s in stations if s.code == earliest_sta)
         v0 = vmod.VP[0] if len(vmod.VP) > 0 else 5.0
-        trial_t = earliest_t - (ztr / v0)
+        trial_t = earliest_t - (ztr / v0)  # ty: ignore[unsupported-operator]
         trial_origin = (nearest_stat.lon, nearest_stat.lat, trial_t)
 
     # Execute hypo71 SINGLE solver

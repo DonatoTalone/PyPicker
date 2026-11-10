@@ -1,14 +1,12 @@
 """
 PyPicker Plugin: Earthquake Focal Mechanism Determination (FOCMEC).
 Bridges PyPicker picks and ObsPy Stream SAC headers to focmecpy solver and Beachball UI.
-"""
+"""  # noqa: EXE002
 
-from copy import deepcopy
-import os
-from pathlib import Path
 import sys
+from copy import deepcopy
+from pathlib import Path
 
-import numpy as np
 from obspy import UTCDateTime
 
 # Path resolution for local and user plugins
@@ -16,15 +14,16 @@ _plugins_dir = str(Path(__file__).resolve().parent)
 if _plugins_dir not in sys.path:
     sys.path.insert(0, _plugins_dir)
 
-import focmecpy as fm
-
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QIcon
+import focmecpy as fm  # ty: ignore[import-not-found]
+import matplotlib
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -33,9 +32,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
-    QSlider,
     QSpinBox,
-    QDoubleSpinBox,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -43,7 +40,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-import matplotlib
 matplotlib.use("QtAgg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
@@ -132,7 +128,7 @@ def extract_stations_and_polarities(stream, picks, velocity_model=None, hypocent
     try:
         import picker_utils_qt as utils
         taup_model = utils.get_or_create_taup_model()
-    except Exception:
+    except Exception:  # noqa: BLE001, S110
         pass
 
     station_data = []
@@ -193,7 +189,7 @@ class FocmecDialog(QDialog):
 
     def __init__(self, parent=None, hypocenter=None):
         super().__init__(parent)
-        self.parent = parent
+        self.parent = parent  # ty: ignore[invalid-assignment]
         self.hypocenter = deepcopy(hypocenter) if hypocenter else {}
         self.station_data = []
         self.focmec_results = None
@@ -274,7 +270,7 @@ class FocmecDialog(QDialog):
         self.table = QTableWidget()
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(["Station", "Comp", "Dist (km)", "Azimuth (°)", "Take-off (°)", "Polarity"])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)  # ty: ignore[unresolved-attribute]
         table_layout.addWidget(self.table)
         left_layout.addWidget(table_box)
 
@@ -348,7 +344,7 @@ class FocmecDialog(QDialog):
             self.status_label.setText("No waveforms loaded in PyPicker.")
             return
 
-        st_data, hypo_dict, missing = extract_stations_and_polarities(
+        st_data, hypo_dict, _ = extract_stations_and_polarities(
             stream, picks, hypocenter=self.hypocenter
         )
         self.station_data = st_data
@@ -436,11 +432,11 @@ class FocmecDialog(QDialog):
 
             # Sync back to parent session picks
             if hasattr(self, "parent") and self.parent and hasattr(self.parent, "picks"):
-                for pk in self.parent.picks:
+                for pk in self.parent.picks:  # ty: ignore[not-iterable]
                     if pk.get("sta") == sta and pk.get("phase", "").upper().startswith("P"):
                         pk["polarity"] = pol_str
                 if hasattr(self.parent, "update_table"):
-                    self.parent.update_table()
+                    self.parent.update_table()  # ty: ignore[call-non-callable]
 
     def run_inversion(self):
         """Execute FOCMEC grid-search solver."""
@@ -510,7 +506,7 @@ class FocmecDialog(QDialog):
                         hypocenter=self.hypocenter,
                     )
                     if self.parent:
-                        self.parent.current_event_id = ev_id
+                        self.parent.current_event_id = ev_id  # ty: ignore[invalid-assignment]
 
                 focmec_qual = utils.calculate_focmec_quality(
                     res["num_polarities"], best["misfit"], res["azimuthal_gap"]
@@ -549,16 +545,16 @@ class FocmecDialog(QDialog):
 
             # Update parent picker and map dialog with focal mechanism
             if self.parent:
-                self.parent.focal_mechanism = best
+                self.parent.focal_mechanism = best  # ty: ignore[invalid-assignment]
                 if hasattr(self.parent, "_map_dialog") and self.parent._map_dialog:
                     try:
-                        self.parent._map_dialog.update_focal_mechanism(best)
-                    except Exception as map_err:
+                        self.parent._map_dialog.update_focal_mechanism(best)  # ty: ignore[unresolved-attribute]
+                    except Exception as map_err:  # noqa: BLE001
                         print(f"Could not update map with focal mechanism: {map_err}")
 
             self._update_plot()
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, "Solver Error", f"FOCMEC inversion failed:\n{e}")
             self.status_label.setText("Inversion failed.")
             self.status_label.setStyleSheet("color: #c0392b; font-weight: bold;")
@@ -606,7 +602,7 @@ class FocmecDialog(QDialog):
             try:
                 fm.save_beachball_figure(self.fig, file_path)
                 QMessageBox.information(self, "Success", f"Beachball figure saved to:\n{file_path}")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 QMessageBox.critical(self, "Export Error", f"Failed to save image:\n{e}")
 
     def export_csv(self):
@@ -624,7 +620,7 @@ class FocmecDialog(QDialog):
             try:
                 fm.export_focal_mechanism_to_csv(file_path, self.hypocenter, self.focmec_results)
                 QMessageBox.information(self, "Success", f"CSV report exported to:\n{file_path}")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 QMessageBox.critical(self, "Export Error", f"Failed to export CSV:\n{e}")
 
     def export_inp(self):
@@ -648,5 +644,5 @@ class FocmecDialog(QDialog):
                 pols = [s["polarity_val"] for s in valid_stations]
                 fm.write_focmec_inp(file_path, comment, stas, azs, tos, pols)
                 QMessageBox.information(self, "Success", f"FOCMEC input file exported to:\n{file_path}")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 QMessageBox.critical(self, "Export Error", f"Failed to export .inp file:\n{e}")

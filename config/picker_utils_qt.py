@@ -316,7 +316,7 @@ def open_path_in_system(target_path):
         try:
             os.startfile(str(path))
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
     # 2. macOS: "open" command
@@ -324,7 +324,7 @@ def open_path_in_system(target_path):
         try:
             subprocess.Popen(["open", str(path)])
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
     # 3. Linux / Unix: "xdg-open" with sanitized LD_LIBRARY_PATH
@@ -332,7 +332,7 @@ def open_path_in_system(target_path):
         try:
             subprocess.Popen(["xdg-open", str(path)], env=clean_env)
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
     # 4. Fallback: QDesktopServices
@@ -340,7 +340,7 @@ def open_path_in_system(target_path):
         url = QUrl.fromLocalFile(str(path))
         if QDesktopServices.openUrl(url):
             return True
-    except Exception:
+    except Exception:  # noqa: BLE001, S110
         pass
 
     return False
@@ -1013,7 +1013,7 @@ def uncertainty_to_hypo71_weight(unc):
     """Map pick uncertainty in seconds to HYPO71 weight code (0-4)."""
     try:
         u = float(unc)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return 0
     if u <= 0.05:
         return 0
@@ -1030,7 +1030,7 @@ def hypo71_weight_to_uncertainty(weight_code):
     mapping = {0: 0.02, 1: 0.10, 2: 0.20, 3: 0.50, 4: 1.00}
     try:
         return mapping.get(int(weight_code), 0.0)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return 0.0
 
 def export_to_seisgram_pick(picks, filename):
@@ -1118,7 +1118,7 @@ def extract_picks_from_nlloc(filename):
                     "polarity": normalize_polarity(polarity),
                     "onset": normalize_onset(onset),
                 })
-            except Exception:
+            except Exception:  # noqa: BLE001, S112
                 continue
     return picks
 
@@ -1255,7 +1255,7 @@ def extract_picks_from_hypo71(filename):
                         "polarity": "undecidable",
                         "onset": s_ons,
                     })
-            except Exception:
+            except Exception:  # noqa: BLE001, S112
                 continue
 
     return picks
@@ -1296,7 +1296,7 @@ def load_picks_from_file(filename, format_hint=None):
             return extract_picks_from_nlloc(filename)
         if len(first) >= 20 and len(first.split()[0]) <= 5 and any(c in first for c in ("P", "S")):
             return extract_picks_from_hypo71(filename)
-    except Exception:
+    except Exception:  # noqa: BLE001, S110
         pass
 
     # Fallback cascade
@@ -1305,7 +1305,7 @@ def load_picks_from_file(filename, format_hint=None):
             res = fn(filename)
             if res:
                 return res
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
     return extract_picks_from_csv(filename)
 
@@ -2065,7 +2065,7 @@ def cluster_station_traces(traces):
                         )
                         + o_val
                     )
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110
             pass
         return None
 
@@ -2089,7 +2089,7 @@ def cluster_station_traces(traces):
 
             # 2. Event ID check: distinct SAC 'kevnm' cannot belong to the same event
             cluster_ev_ids = {_get_ev_id(t) for t in cluster if _get_ev_id(t) is not None}
-            if c_tr_ev is not None and cluster_ev_ids:
+            if c_tr_ev is not None and cluster_ev_ids:  # noqa: SIM102
                 if c_tr_ev not in cluster_ev_ids:
                     continue
 
@@ -2110,7 +2110,7 @@ def cluster_station_traces(traces):
                     continue
             else:
                 dt = abs(float(tr.stats.starttime - c_start))
-                if dt > 10.0 and not (c_start <= tr.stats.starttime <= c_end):
+                if dt > 10.0 and not (c_start <= tr.stats.starttime <= c_end):  # noqa: SIM102
                     if c_tr_ev is None or not cluster_ev_ids:
                         continue
 

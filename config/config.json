@@ -10,11 +10,13 @@
         "save_sac": "Ctrl+S",
         "export_csv": "Ctrl+E",
         "toggle_filter": "F",
+        "toggle_picks": "T",
         "pick_p": "1",
         "pick_s": "2",
         "localize": "L",
         "focmec": "K",
         "open_map": "M",
+        "open_header": "H",
         "help_doc": "F1"
     },
     "colors": {

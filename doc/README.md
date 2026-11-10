@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://doi.org/10.5281/zenodo.23846581"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23846581.svg" alt="DOI"></a>
+  <a href="https://doi.org/10.5281/zenodo.24115641"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.24115641.svg" alt="DOI"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python: 3.10+"></a>
 </p>
@@ -137,7 +137,7 @@ LICENSE                    GNU General Public License v3
 
 ## Citation & License
 
-If you use PyPicker in scientific research, please cite it using the metadata in [`CITATION.cff`](./CITATION.cff) and DOI [10.5281/zenodo.21976300](https://doi.org/10.5281/zenodo.21976300).
+If you use PyPicker in scientific research, please cite it using the metadata in [`CITATION.cff`](./CITATION.cff) and DOI [10.5281/zenodo.24115641](https://doi.org/10.5281/zenodo.24115641).
 
 ### Third-Party Software & Acknowledgments
 

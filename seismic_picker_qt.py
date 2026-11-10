@@ -823,7 +823,9 @@ class DocumentationViewerDialog(QDialog):
             ("7. Hypocentral Location (Hypo71)", "hypo71_localization.md"),
             ("8. Focal Mechanism (FOCMEC)", "focmec_focal_mechanism.md"),
             ("9. Geographic Map & Stations", "geographic_map.md"),
-            ("10. Building & Releases", "building_and_release.md"),
+            ("10. SAC Header", "sac_header.md"),
+            ("11. Wadati Analysis", "wadati_analysis.md"),
+            ("12. Building & Releases", "building_and_release.md"),
         ]
 
         self.init_ui()
@@ -1113,6 +1115,10 @@ class SeismicPickerQT(QMainWindow):
         self._scalo_cache = {}
         self._proc_cache = {}
         self._theo_cache = None
+        self._station_event_cache = {}
+        self._station_order_cache = {}
+        self._trace_event_key_lookup = {}
+        self._picks_by_event_key = {}
         self._preferred_channel_group = None
         self._preferred_event_key = None
 
@@ -1123,6 +1129,8 @@ class SeismicPickerQT(QMainWindow):
 
         # Picking state
         self.active_pick_items = None  # The visual LinearRegionItem
+        self._active_pick_target_plot = None
+        self._active_pick_abs_time = None
         self.pick_start_point = None  # Mouse coordinate (px)
         self.current_picking_data = None
         self.last_mouse_pos = None    # Last mouse scene position
@@ -1168,9 +1176,13 @@ class SeismicPickerQT(QMainWindow):
         act_map = plugins_menu.addAction(f"&Geographic Map ({map_key})")  # ty: ignore[unresolved-attribute]
         act_map.triggered.connect(self.open_map_window)  # ty: ignore[unresolved-attribute]
 
-        act_key = self.config.get("shortcuts", {}).get("open_header", "H")
-        act_sac = plugins_menu.addAction(f"&SAC Header Viewer ({act_key})")  # ty: ignore[unresolved-attribute]
+        sac_key = self.config.get("shortcuts", {}).get("open_header", "H")
+        act_sac = plugins_menu.addAction(f"&SAC Header Viewer ({sac_key})")  # ty: ignore[unresolved-attribute]
         act_sac.triggered.connect(self.open_sac_header_dialog)  # ty: ignore[unresolved-attribute]
+
+        wadati_key = self.config.get("shortcuts", {}).get("open_wadati", "W")
+        act_wadati = plugins_menu.addAction(f"&Wadati Analysis ({wadati_key})")  # ty: ignore[unresolved-attribute]
+        act_wadati.triggered.connect(self.open_wadati_dialog)  # ty: ignore[unresolved-attribute]
 
         plugins_menu.addSeparator()  # ty: ignore[unresolved-attribute]
         act_open_plugins = plugins_menu.addAction("Open &Plugins Folder")  # ty: ignore[unresolved-attribute]
@@ -1411,8 +1423,6 @@ class SeismicPickerQT(QMainWindow):
         self.show_picks.setChecked(default_show_picks)
         self.show_picks.stateChanged.connect(self.update_pick_overlays)
         right_sidebar.addWidget(self.show_picks)
-
-        right_sidebar.addWidget(QLabel("<b>Theoretical:</b>"))
         self.show_theo = QCheckBox("Show Arrivals")
         default_theo = self.config.get("defaults", {}).get("show_theoretical_arrivals", False)
         self.show_theo.setChecked(default_theo)
@@ -1691,6 +1701,7 @@ class SeismicPickerQT(QMainWindow):
             "focmec": self.open_focmec_dialog,
             "open_map": self.open_map_window,
             "open_header": self.open_sac_header_dialog,
+            "open_wadati": self.open_wadati_dialog,
             "help_doc": lambda: self.open_documentation_viewer("README.md"),
         }
 
@@ -1873,6 +1884,7 @@ class SeismicPickerQT(QMainWindow):
             "focmec": "Focal Mechanism (FOCMEC)",
             "open_map": "Geographic Map",
             "open_header": "SAC Header",
+            "open_wadati": "Wadati Analysis",
             "help_doc": "Documentation",
         }
         items = []
@@ -1910,6 +1922,133 @@ class SeismicPickerQT(QMainWindow):
     def _trace_key(self, tr):
         """Identify a trace: same id, start time and length = same data."""
         return (tr.id, tr.stats.starttime.ns, tr.stats.npts)
+
+    def _invalidate_stream_analysis_caches(self):
+            """Discard derived group indexes after the loaded stream changes."""
+            self._station_event_cache.clear()
+            self._station_order_cache.clear()
+            self._trace_event_key_lookup.clear()
+            self._picks_by_event_key.clear()
+
+    def _get_station_event_clusters(self, sta, traces=None):
+        """Return cached event clusters, remapped to the supplied Trace objects.
+
+        The cache stores trace keys rather than Trace references so it can be reused
+        for both original and preprocessed copies of the same waveforms.
+        """
+        traces_list = list(traces) if traces is not None else [
+            tr for tr in self.original_stream if tr.stats.station == sta
+        ]
+        if not traces_list:
+            return []
+        if len(traces_list) == 1:
+            return [traces_list]
+
+        signature = tuple(sorted(self._trace_key(tr) for tr in traces_list))
+        cache_key = (sta, signature)
+        cached_clusters = self._station_event_cache.get(cache_key)
+
+        if cached_clusters is None:
+            clusters = utils.cluster_station_traces(traces_list)
+            if not clusters:
+                clusters = [traces_list]
+            cached_clusters = tuple(
+                tuple(self._trace_key(tr) for tr in cluster)
+                for cluster in clusters
+            )
+            self._station_event_cache[cache_key] = cached_clusters
+
+        trace_by_key = {self._trace_key(tr): tr for tr in traces_list}
+        return [
+            [trace_by_key[key] for key in cluster_keys if key in trace_by_key]
+            for cluster_keys in cached_clusters
+        ]
+
+    def _prepare_pick_render_index(self):
+        """Index traces and picks by event once before drawing or refreshing overlays."""
+        self._trace_event_key_lookup = {}
+        self._picks_by_event_key = {}
+        if not self.original_stream:
+            return
+
+        traces_by_station = {}
+        for tr in self.original_stream:
+            traces_by_station.setdefault(tr.stats.station, []).append(tr)
+
+        event_records = []
+        for sta, station_traces in traces_by_station.items():
+            clusters = self._get_station_event_clusters(sta, station_traces)
+            for cluster in clusters:
+                if not cluster:
+                    continue
+                cluster_keys = tuple(sorted(self._trace_key(tr) for tr in cluster))
+                event_key = (sta, cluster_keys)
+                event_start = min(tr.stats.starttime for tr in cluster)
+                event_end = max(tr.stats.endtime for tr in cluster)
+                event_records.append((sta, event_key, event_start, event_end))
+                for tr in cluster:
+                    self._trace_event_key_lookup[self._trace_key(tr)] = event_key
+                    # Fallback for preprocessing operations that alter npts but keep
+                    # the same trace ID and absolute start time.
+                    self._trace_event_key_lookup[(tr.id, tr.stats.starttime.ns)] = event_key
+
+        picks_by_station = {}
+        for pk in self.picks:
+            sta = pk.get("sta")
+            if not sta:
+                continue
+            try:
+                pick_time = UTCDateTime(pk.get("abs_t"))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            picks_by_station.setdefault(sta, []).append((pk, pick_time))
+
+        picks_by_event = {}
+        events_by_station = {}
+        for record in event_records:
+            events_by_station.setdefault(record[0], []).append(record)
+
+        # Assign each pick to the closest event window that contains its timestamp.
+        # This also keeps the same phase-color sequence on every component of an event.
+        for sta, station_picks in picks_by_station.items():
+            station_events = events_by_station.get(sta, ())
+            for pk, pick_time in station_picks:
+                candidates = [
+                    event for event in station_events
+                    if event[2] <= pick_time <= event[3]
+                ]
+                if not candidates:
+                    continue
+                chosen = min(candidates, key=lambda event: abs(float(pick_time - event[2])))
+                picks_by_event.setdefault(chosen[1], []).append((pk, pick_time))
+
+        for event_key, event_picks in picks_by_event.items():
+            event_picks.sort(key=lambda item: item[1])
+            p_picks = [
+                item for item in event_picks
+                if (item[0].get("phase") or "").strip().upper().startswith("P")
+            ]
+            s_picks = [
+                item for item in event_picks
+                if (item[0].get("phase") or "").strip().upper().startswith("S")
+            ]
+            other_picks = [
+                item for item in event_picks
+                if not (item[0].get("phase") or "").strip().upper().startswith(("P", "S"))
+            ]
+
+            colors_by_pick = {}
+            for i, (pk, _) in enumerate(p_picks):
+                colors_by_pick[id(pk)] = P_COLOR_PALETTE[i % len(P_COLOR_PALETTE)]
+            for i, (pk, _) in enumerate(s_picks):
+                colors_by_pick[id(pk)] = S_COLOR_PALETTE[i % len(S_COLOR_PALETTE)]
+            for i, (pk, _) in enumerate(other_picks):
+                colors_by_pick[id(pk)] = CUSTOM_COLOR_PALETTE[i % len(CUSTOM_COLOR_PALETTE)]
+
+            self._picks_by_event_key[event_key] = [
+                (pk, pick_time, colors_by_pick.get(id(pk)))
+                for pk, pick_time in event_picks
+            ]
 
     def _ask_load_mode(self, n_new):
         """Ask whether to add new traces to the session or replace it.
@@ -2036,6 +2175,7 @@ class SeismicPickerQT(QMainWindow):
             self._proc_cache.clear()
             self._theo_cache = None
             self._scalo_cache.clear()
+            self._invalidate_stream_analysis_caches()
             self.sta_sel.clear()
             self.group_sel.blockSignals(True)
             self.group_sel.clear()
@@ -2046,11 +2186,6 @@ class SeismicPickerQT(QMainWindow):
             self.table.setRowCount(0)
             if hasattr(self, "phase_diff_text"):
                 self.update_phase_differences()
-            for p in self.plots:
-                try:
-                    p.clear()
-                except Exception:  # noqa: BLE001, S110
-                    pass
             self.win.clear()  # ty: ignore[unresolved-attribute]
             self.plots = []
             self.update_plots(reset_zoom=True)
@@ -2066,6 +2201,7 @@ class SeismicPickerQT(QMainWindow):
 
     def _setup_after_load(self, target_idx=0):
         "Populate the station list after data loading"
+        self._invalidate_stream_analysis_caches()
         seen = set()
         self.sta_sel.blockSignals(True)
         self.sta_sel.clear()
@@ -2145,7 +2281,7 @@ class SeismicPickerQT(QMainWindow):
             return [("All (1 ch)", {"type": "all", "traces": traces, "key": "all"})]
 
         # 1. Cluster traces into time windows / events using robust clustering
-        time_clusters = utils.cluster_station_traces(traces)
+        time_clusters = self._get_station_event_clusters(sta, traces)
 
         # 2. Analyze instrument / channel groups across traces
         def _get_inst_key(tr):
@@ -2343,74 +2479,64 @@ class SeismicPickerQT(QMainWindow):
             self._setup_after_load(target_idx=idx)
 
     def _sort_station_traces_grouped(self, sta_traces):
-        """Sort station traces into compact 3-component groups by event and instrument.
+        """Sort traces by event, instrument priority, then component (Z, E, N).
 
-        Clusters traces by event using utils.cluster_station_traces, groups by
-        instrument key (loc.prefix), prioritizes instruments (broadband before strong-motion),
-        and orders components (Z first, E second, N third).
+        The ordered trace-key sequence is cached, so filter/view changes do not
+        repeat temporal clustering and instrument grouping for unchanged data.
         """
-        if not sta_traces:
-            return []
         traces_list = list(sta_traces)
         if len(traces_list) <= 1:
             return traces_list
 
-        def _get_inst_key(tr):
+        sta = traces_list[0].stats.station
+        signature = tuple(sorted(self._trace_key(tr) for tr in traces_list))
+        cache_key = (sta, signature)
+        cached_order = self._station_order_cache.get(cache_key)
+        trace_by_key = {self._trace_key(tr): tr for tr in traces_list}
+        if cached_order is not None and all(key in trace_by_key for key in cached_order):
+            return [trace_by_key[key] for key in cached_order]
+
+        inst_priority = {
+            "HH": 10, "BH": 11, "LH": 12,
+            "SH": 20, "EH": 21, "DP": 22,
+            "HN": 30, "EN": 31, "HG": 32,
+        }
+        component_order = {
+            "Z": 0, "E": 1, "N": 2,
+            "3": 0, "2": 1, "1": 2,
+            "R": 1, "T": 2,
+        }
+
+        def _inst_key(tr):
             loc = (getattr(tr.stats, "location", "") or "").strip()
-            cha = getattr(tr.stats, "channel", "")
+            cha = (getattr(tr.stats, "channel", "") or "").strip()
             prefix = cha[:2] if len(cha) >= 2 else cha
             return f"{loc}.{prefix}" if loc else prefix
 
-        def _inst_priority(inst_key):
+        def _inst_sort_key(inst_key):
             core = inst_key.split(".")[-1].upper()
-            prio = {
-                "HH": 10,
-                "BH": 11,
-                "LH": 12,
-                "SH": 20,
-                "EH": 21,
-                "DP": 22,
-                "HN": 30,
-                "EN": 31,
-                "HG": 32,
-            }
-            for pfx, val in prio.items():
-                if core.startswith(pfx):
-                    return val
-            return 50
+            priority = next(
+                (value for prefix, value in inst_priority.items() if core.startswith(prefix)),
+                50,
+            )
+            return priority, inst_key
 
-        def _comp_order(tr):
-            comp = tr.stats.channel[-1].upper() if tr.stats.channel else ""
-            order_map = {
-                "Z": 0, "E": 1, "N": 2,
-                "3": 0, "2": 1, "1": 2,
-                "R": 1, "T": 2,
-            }
-            return order_map.get(comp, 9)
-
-        # 1. Cluster traces by event
-        time_clusters = utils.cluster_station_traces(traces_list)
+        def _component_sort_key(tr):
+            cha = getattr(tr.stats, "channel", "") or ""
+            comp = cha[-1].upper() if cha else ""
+            return component_order.get(comp, 9)
 
         result = []
-        for cluster in time_clusters:
-            # 2. Group traces in this event by instrument key
+        for cluster in self._get_station_event_clusters(sta, traces_list):
             inst_dict = {}
             for tr in cluster:
-                k = _get_inst_key(tr)
-                inst_dict.setdefault(k, []).append(tr)
+                inst_dict.setdefault(_inst_key(tr), []).append(tr)
 
-            # 3. Sort instrument keys by priority, then alphabetically
-            sorted_inst_keys = sorted(
-                inst_dict.keys(),
-                key=lambda k: (_inst_priority(k), k),
-            )
+            for inst_key in sorted(inst_dict, key=_inst_sort_key):
+                result.extend(sorted(inst_dict[inst_key], key=_component_sort_key))
 
-            # 4. Within each instrument group, sort components Z, E, N
-            for k in sorted_inst_keys:
-                inst_traces = inst_dict[k]
-                sorted_inst_traces = sorted(inst_traces, key=_comp_order)
-                result.extend(sorted_inst_traces)
-
+        ordered_keys = tuple(self._trace_key(tr) for tr in result)
+        self._station_order_cache[cache_key] = ordered_keys
         return result
 
     def rotate_phase(self):
@@ -2423,16 +2549,21 @@ class SeismicPickerQT(QMainWindow):
             self.ph_sel.setCurrentText("P")
 
     def update_plots(self, *args, reset_zoom=False):
+        """Rebuild plots while suppressing intermediate widget repaints."""
+        was_updates_enabled = self.win.updatesEnabled()
+        self.win.setUpdatesEnabled(False)
+        try:
+            self._update_plots_impl(*args, reset_zoom=reset_zoom)
+        finally:
+            self.win.setUpdatesEnabled(was_updates_enabled)
+            if was_updates_enabled:
+                self.win.update()
+
+    def _update_plots_impl(self, *args, reset_zoom=False):
         "Redraw all plots based on current filters and view mode"
         old_view_range = None
         if not reset_zoom and self.plots and self.view_wave.isChecked() and hasattr(self.plots[0], 'viewRange'):
             old_view_range = self.plots[0].viewRange()
-
-        for p in self.plots:
-            try:
-                p.clear()
-            except Exception:  # noqa: BLE001, S110
-                pass
         self.win.clear()  # ty: ignore[unresolved-attribute]
         self.plots = []
         if not self.original_stream or not self.stations:
@@ -2448,12 +2579,22 @@ class SeismicPickerQT(QMainWindow):
             "high_f": self.f_high.value(),
         }
 
-        if self.view_mode.currentText() == "Focus Mode":
+        mode = self.view_mode.currentText()
+        theo_arrs = self._get_theoretical_arrivals()
+        self._prepare_pick_render_index()
+
+        if mode == "Focus Mode":
             self._plot_detail(params, old_view_range)
             return
 
-        mode = self.view_mode.currentText()
-        theo_arrs = self._get_theoretical_arrivals()
+        spectrum_processing_key = (
+            params.get("demean"),
+            params.get("detrend"),
+            params.get("normalize"),
+            params.get("filter_type"),
+            round(params.get("low_f", 1.0), 3),  # ty: ignore[no-matching-overload]
+            round(params.get("high_f", 20.0), 3),  # ty: ignore[no-matching-overload]
+        )
 
         if mode == "Single Station":
             sta_idx = self.sta_sel.currentIndex()
@@ -2483,28 +2624,37 @@ class SeismicPickerQT(QMainWindow):
                 )
                 return
 
-            seen_sta = set()
-            target_sta = []
-            for s in self.stations:
-                sta_name = s["sta"]
-                if sta_name not in seen_sta and any(tr.stats.station == sta_name for tr in proc_st):
-                    seen_sta.add(sta_name)
-                    target_sta.append(sta_name)
-            for tr in proc_st:
-                if tr.stats.station not in seen_sta:
-                    seen_sta.add(tr.stats.station)
-                    target_sta.append(tr.stats.station)
-
             self.sta_count_label.setText("All")
-            num_traces = sum([len(proc_st.select(station=s)) for s in target_sta])
-            total_h = (num_traces * 150) + (len(target_sta) * 40)
+            total_h = (len(proc_st) * 150) + (len(self.stations) * 40)
+
+        traces_by_station = {}
+        for trace in proc_st:
+            traces_by_station.setdefault(trace.stats.station, []).append(trace)
+
+        if mode == "Single Station":
+            target_sta = [
+                sta_name for sta_name in target_sta
+                if sta_name in traces_by_station
+            ]
+        else:
+            target_sta = []
+            seen_sta = set()
+            for station_info in self.stations:
+                sta_name = station_info["sta"]
+                if sta_name in traces_by_station and sta_name not in seen_sta:
+                    target_sta.append(sta_name)
+                    seen_sta.add(sta_name)
+            for sta_name in traces_by_station:
+                if sta_name not in seen_sta:
+                    target_sta.append(sta_name)
+                    seen_sta.add(sta_name)
 
         self.win.setMinimumHeight(max(total_h, 300))
         first_p = None
         current_row = 0
 
         for station in target_sta:
-            traces = self._sort_station_traces_grouped(proc_st.select(station=station))
+            traces = self._sort_station_traces_grouped(traces_by_station.get(station, ()))
             self.win.addItem(
                 pg.LabelItem(f"<b>STATION: {station}</b>", size="12pt", color=self.fg_color),
                 row=current_row,  # ty: ignore[unknown-argument]
@@ -2517,8 +2667,6 @@ class SeismicPickerQT(QMainWindow):
                 current_row += 1
                 if first_p is None:
                     first_p = p
-                else:
-                    p.setXLink(first_p)
 
                 # Color logic
                 color = self._trace_color(tr.stats.channel)
@@ -2530,7 +2678,14 @@ class SeismicPickerQT(QMainWindow):
                     )
                 else:
                     # Spectrum view
-                    f, s = utils.get_spectrum(tr)
+                    spectrum_token = (id(tr.data), spectrum_processing_key)
+                    cached_spectrum = getattr(tr, "_cached_spectrum", None)
+                    if cached_spectrum is None or cached_spectrum[0] != spectrum_token:
+                        spectrum = utils.get_spectrum(tr)
+                        tr._cached_spectrum = (spectrum_token, spectrum)
+                    else:
+                        spectrum = cached_spectrum[1]
+                    f, s = spectrum
                     if len(f) == 0 or len(s) == 0:
                         continue
                     scale = self.spec_scale.currentText()
@@ -2576,6 +2731,16 @@ class SeismicPickerQT(QMainWindow):
                         p.setYRange(0, s_max * 1.05, padding=0)
                         p.setLimits(yMin=0, yMax=s_max * 1.5)
 
+                if p is not first_p:
+                    p.setXLink(first_p)
+                if hasattr(p, "meta"):
+                    p.meta["event_key"] = self._trace_event_key_lookup.get(
+                        self._trace_key(tr),
+                        self._trace_event_key_lookup.get((tr.id, tr.stats.starttime.ns)),
+                    )
+                    p.meta["dur"] = tr.stats.npts * tr.stats.delta
+                    p.meta["trace_id_start"] = (tr.id, tr.stats.starttime.ns)
+
                 # Draw channel name
                 fill_col = (255, 255, 255, 180) if self._is_light_bg(getattr(self, "current_bg", "#1e1e1e")) else (0, 0, 0, 180)
                 label = pg.TextItem(
@@ -2604,9 +2769,21 @@ class SeismicPickerQT(QMainWindow):
     def _plot_waveform(self, p, tr, color, theo_arrs, old_view_range=None, normalized=False):
         "Time-domain trace on plot `p`, with its picks"
         dur = tr.stats.npts * tr.stats.delta
-        data_max = float(np.max(np.abs(tr.data))) if len(tr.data) > 0 else 1.0
-        if not np.isfinite(data_max) or data_max <= 0:
-            data_max = 1.0
+        data_token = (id(tr.data), tr.stats.npts)
+        cached_absmax = getattr(tr, "_cached_absmax", None)
+        if cached_absmax is None or cached_absmax[0] != data_token:
+            if len(tr.data) > 0:
+                # max(abs(data)) without allocating a full temporary absolute-value array.
+                data_min = float(np.min(tr.data))
+                data_max_value = float(np.max(tr.data))
+                data_max = max(abs(data_min), abs(data_max_value))
+            else:
+                data_max = 1.0
+            if not np.isfinite(data_max) or data_max <= 0:
+                data_max = 1.0
+            tr._cached_absmax = (data_token, data_max)
+        else:
+            data_max = cached_absmax[1]
         p.setLimits(
             xMin=0,
             xMax=dur,
@@ -2645,6 +2822,9 @@ class SeismicPickerQT(QMainWindow):
             "sta": tr.stats.station,
             "cha": tr.stats.channel,
             "st": tr.stats.starttime,
+            "dur": dur,
+            "trace_key": self._trace_key(tr),
+            "event_key": self._trace_event_key_lookup.get(self._trace_key(tr)),
         }
         p.pick_items = []
         self._draw_picks(p, tr, theo_arrs)
@@ -2664,36 +2844,29 @@ class SeismicPickerQT(QMainWindow):
         y_pick = y_max * 0.70
         y_theo = y_max * 0.50
 
-        # Group picks on this station to assign varied colors for duplicate phase types
-        sta_picks = [pk for pk in self.picks if pk.get("sta") == tr.stats.station]
-        sta_picks_sorted = sorted(sta_picks, key=lambda k: k.get("abs_t", ""))
+        trace_key = self._trace_key(tr)
+        trace_id_start = (tr.id, tr.stats.starttime.ns)
+        event_key = self._trace_event_key_lookup.get(trace_key)
+        if event_key is None:
+            event_key = self._trace_event_key_lookup.get(trace_id_start)
+        if hasattr(p, "meta"):
+            p.meta["event_key"] = event_key
+            p.meta["dur"] = dur
+            p.meta["trace_key"] = trace_key
+            p.meta["trace_id_start"] = trace_id_start
 
-        p_picks = [pk for pk in sta_picks_sorted if (pk.get("phase") or "").strip().upper().startswith("P")]
-        s_picks = [pk for pk in sta_picks_sorted if (pk.get("phase") or "").strip().upper().startswith("S")]
-        other_picks = [pk for pk in sta_picks_sorted if pk not in p_picks and pk not in s_picks]
-
-        p_colors = {}
-        for i, pk in enumerate(p_picks):
-            p_colors[id(pk)] = P_COLOR_PALETTE[i % len(P_COLOR_PALETTE)]
-
-        s_colors = {}
-        for i, pk in enumerate(s_picks):
-            s_colors[id(pk)] = S_COLOR_PALETTE[i % len(S_COLOR_PALETTE)]
-
-        other_colors = {}
-        for i, pk in enumerate(other_picks):
-            other_colors[id(pk)] = CUSTOM_COLOR_PALETTE[i % len(CUSTOM_COLOR_PALETTE)]
-
-        # Draw existing picks
         if not hasattr(self, "show_picks") or self.show_picks.isChecked():
-            for pk in self.picks:
-                if pk["sta"] == tr.stats.station:
-                    t_rel = UTCDateTime(pk["abs_t"]) - tr.stats.starttime
-                    if 0 <= t_rel <= dur:
-                        color = p_colors.get(id(pk)) or s_colors.get(id(pk)) or other_colors.get(id(pk))
-                        self._add_visual_pick(
-                            p, t_rel, pk.get("phase") or "Custom", pk.get("uncertainty", 0.0), color=color, y_pos=y_pick
-                        )
+            for pk, pick_time, color in self._picks_by_event_key.get(event_key, ()):
+                t_rel = pick_time - tr.stats.starttime
+                if 0 <= t_rel <= dur:
+                    self._add_visual_pick(
+                        p,
+                        t_rel,
+                        pk.get("phase") or "Custom",
+                        pk.get("uncertainty", 0.0),
+                        color=color,
+                        y_pos=y_pick,
+                    )
 
         # Draw theoretical arrivals
         if tr.stats.station in theo_arrs:
@@ -2702,14 +2875,14 @@ class SeismicPickerQT(QMainWindow):
                 if 0 <= t_rel <= dur:
                     ph_u = ph.upper()
                     if ph_u.startswith("P"):
-                        t_col = QColor(46, 204, 113, 140)  # Muted picked P emerald green
+                        t_col = QColor(46, 204, 113, 140)
                     elif ph_u.startswith("S"):
-                        t_col = QColor(224, 86, 253, 140)  # Muted picked S magenta
+                        t_col = QColor(224, 86, 253, 140)
                     else:
-                        t_col = QColor(142, 68, 173, 140)  # Muted other pick purple
+                        t_col = QColor(142, 68, 173, 140)
                     self._add_visual_pick(
-                        p, t_rel, f"{ph} (theo)", 0.0, color=t_col, style=Qt.PenStyle.DashDotLine, y_pos=y_theo
-                    )
+                        p, t_rel, f"{ph} (theo)", 0.0, color=t_col,
+                        style=Qt.PenStyle.DashDotLine, y_pos=y_theo,)
 
     def _detail_blocks(self, raw_st, raw_disp_st, proc_st):
         """One (raw, raw_disp, processed) trio per source file: the first component of each file.
@@ -2773,19 +2946,30 @@ class SeismicPickerQT(QMainWindow):
             for p in (p_raw, p_filt, p_scalo):
                 p.getAxis("left").setWidth(60)  # same width: linked X axes stay aligned
 
-            if first_p is None:
-                first_p = p_raw
-            else:
-                p_raw.setXLink(first_p)
-            p_filt.setXLink(first_p)
-            p_scalo.setXLink(first_p)
-
             self._plot_waveform(p_raw, raw_disp, color, theo_arrs, old_view_range, normalized=False)
             self._plot_waveform(
                 p_filt, proc, color, theo_arrs, old_view_range, normalized=params["normalize"]
             )
             p_scalo.meta = p_raw.meta  # needed by _start_picking when clicking on the scalogram
             self._plot_scalogram(p_scalo, raw, duration, old_view_range, theo_arrs)
+
+            event_key = self._trace_event_key_lookup.get(
+                self._trace_key(raw),
+                self._trace_event_key_lookup.get((raw.id, raw.stats.starttime.ns)),
+            )
+            for panel in (p_raw, p_filt, p_scalo):
+                if not hasattr(panel, "meta"):
+                    panel.meta = {}
+                panel.meta["event_key"] = event_key
+                panel.meta["dur"] = raw.stats.npts * raw.stats.delta
+                panel.meta["trace_key"] = self._trace_key(raw)
+                panel.meta["trace_id_start"] = (raw.id, raw.stats.starttime.ns)
+
+            if first_p is None:
+                first_p = p_raw
+            for panel in (p_raw, p_filt, p_scalo):
+                if panel is not first_p:
+                    panel.setXLink(first_p)
 
             p_raw.setLabel("left", "Raw")
             p_filt.setLabel("left", "Filtered")
@@ -2852,11 +3036,13 @@ class SeismicPickerQT(QMainWindow):
             if p.sceneBoundingRect().contains(scene_pos):
                 target_p = p
                 break
-        if not target_p:
+        if target_p is None or not hasattr(target_p, "meta"):
             return
         
         mouse_point = target_p.vb.mapSceneToView(scene_pos)
         self.pick_start_point = scene_pos
+        pick_abs_time = target_p.meta["st"] + mouse_point.x()
+        event_key = target_p.meta.get("event_key")
 
         phase = self.ph_sel.currentText()
         if phase == "Custom":
@@ -2867,22 +3053,41 @@ class SeismicPickerQT(QMainWindow):
             "sta": target_p.meta["sta"],
             "cha_source": target_p.meta["cha"],
             "phase": phase,
-            "abs_t": str(target_p.meta["st"] + mouse_point.x()),
+            "abs_t": str(pick_abs_time),
             "t_rel": mouse_point.x(),
             "polarity": self.polarity_sel.currentText(),
             "onset": self.onset_sel.currentText(),
         }
 
+        self._active_pick_target_plot = target_p
+        self._active_pick_abs_time = pick_abs_time
         self.active_pick_items = []
-        for p in self.plots:
+        # Only mirror the temporary pick across components of this station/event.
+        candidate_plots = [target_p]
+        if event_key is not None:
+            candidate_plots = [
+                plot for plot in self.plots
+                if getattr(plot, "meta", {}).get("sta") == target_p.meta.get("sta")
+                and getattr(plot, "meta", {}).get("event_key") == event_key
+            ]
+
+        for plot in candidate_plots:
+            meta = getattr(plot, "meta", {})
+            start_time = meta.get("st")
+            duration = meta.get("dur")
+            if start_time is None:
+                continue
+            center = float(pick_abs_time - start_time)
+            if duration is not None and not (0.0 <= center <= float(duration)):
+                continue
             pick_item = pg.LinearRegionItem(
-                values=[mouse_point.x(), mouse_point.x()],
+                values=[center, center],
                 brush=pg.mkBrush(142, 68, 173, 100),
-                pen=pg.mkPen("black", width=2),   # Linea nera e SPESSA 2
+                pen=pg.mkPen("black", width=2),
                 movable=False,
             )
-            p.addItem(pick_item)
-            self.active_pick_items.append(pick_item)
+            plot.addItem(pick_item)
+            self.active_pick_items.append((plot, pick_item, center))
 
     def start_pick_from_shortcut(self, phase):
         if not self.last_mouse_pos or not self.view_wave.isChecked() or self.active_pick_items:
@@ -2894,9 +3099,10 @@ class SeismicPickerQT(QMainWindow):
         """Start or finalize a pick on mouse click."""
         if hasattr(self, "active_pick_items") and self.active_pick_items:
             # End picking
+            first_pick_item = self.active_pick_items[0][1]
             unc = (
-                self.active_pick_items[0].getRegion()[1]
-                - self.active_pick_items[0].getRegion()[0]
+                first_pick_item.getRegion()[1]
+                - first_pick_item.getRegion()[0]
             ) / 2
             self.current_picking_data["uncertainty"] = round(unc, 4)  # ty: ignore[invalid-assignment]
             
@@ -2921,10 +3127,14 @@ class SeismicPickerQT(QMainWindow):
             else:
                 self.picks.append(self.current_picking_data)
 
-            for i, p in enumerate(self.plots):
-                if i < len(self.active_pick_items):
-                    p.removeItem(self.active_pick_items[i])
+            for plot, pick_item, _center in self.active_pick_items:
+                try:
+                    plot.removeItem(pick_item)
+                except Exception:  # noqa: BLE001, S110
+                    pass
             self.active_pick_items = []
+            self._active_pick_target_plot = None
+            self._active_pick_abs_time = None
             self.update_table()
             self.update_pick_overlays()
             return
@@ -2935,14 +3145,12 @@ class SeismicPickerQT(QMainWindow):
     def on_mouse_move(self, pos):
         """Update uncertainty visual range based on vertical mouse movement."""
         self.last_mouse_pos = pos
-        if self.active_pick_items and self.pick_start_point and self.plots:
+        if self.active_pick_items and self.pick_start_point and self._active_pick_target_plot:
             diff_y = abs(pos.y() - self.pick_start_point.y())
-            view_range = self.plots[0].viewRange()[0]
+            view_range = self._active_pick_target_plot.viewRange()[0]
             uncertainty = (diff_y / 500) * (view_range[1] - view_range[0])
-            t_center = self.current_picking_data["t_rel"]  # ty: ignore[not-subscriptable]
-            new_region = [t_center - uncertainty, t_center + uncertainty]
-            for item in self.active_pick_items:
-                item.setRegion(new_region)
+            for _plot, item, t_center in self.active_pick_items:
+                item.setRegion([t_center - uncertainty, t_center + uncertainty])
 
     def _add_visual_pick(self, plot, x_pos, label, uncertainty=0.0, color=None, style=Qt.PenStyle.DashLine, y_pos=None):
         c_cfg = self.config.get("colors", {})
@@ -3118,29 +3326,36 @@ class SeismicPickerQT(QMainWindow):
         """Update only pick lines and labels on existing plots without rebuilding."""
         if not self.plots:
             return
+        self._prepare_pick_render_index()
         theo_arrs = self._get_theoretical_arrivals()
-        for p in self.plots:
-            if not hasattr(p, "meta"):
-                continue
-            if hasattr(p, "pick_items"):
-                for item in p.pick_items:
-                    try:
-                        p.removeItem(item)
-                    except Exception:  # noqa: BLE001, S110
-                        pass
-                p.pick_items = []
-            sta = p.meta.get("sta")
-            cha = p.meta.get("cha")
-            st_time = p.meta.get("st")
-            matched_tr = next(
-                (tr for tr in self.original_stream
-                if tr.stats.station == sta and tr.stats.channel == cha and (st_time is None or tr.stats.starttime == st_time)),
-                None,
+        trace_lookup = {self._trace_key(tr): tr for tr in self.original_stream}
+        trace_id_start_lookup = {
+            (tr.id, tr.stats.starttime.ns): tr for tr in self.original_stream
+        }
+        simple_lookup = {}
+        for tr in self.original_stream:
+            simple_lookup.setdefault(
+                (tr.stats.station, tr.stats.channel, tr.stats.starttime), tr
             )
-            if not matched_tr:
-                matched_tr = next((tr for tr in self.original_stream if tr.stats.station == sta and tr.stats.channel == cha), None)
-            if matched_tr:
-                self._draw_picks(p, matched_tr, theo_arrs)
+        for plot in self.plots:
+            meta = getattr(plot, "meta", None)
+            if not meta:
+                continue
+            for item in getattr(plot, "pick_items", ()):
+                try:
+                    plot.removeItem(item)
+                except Exception:  # noqa: BLE001, S110
+                    pass
+            plot.pick_items = []
+            matched_tr = trace_lookup.get(meta.get("trace_key"))
+            if matched_tr is None:
+                matched_tr = trace_id_start_lookup.get(meta.get("trace_id_start"))
+            if matched_tr is None:
+                matched_tr = simple_lookup.get(
+                    (meta.get("sta"), meta.get("cha"), meta.get("st"))
+                )
+            if matched_tr is not None:
+                self._draw_picks(plot, matched_tr, theo_arrs)
 
     def update_phase_differences(self):
         """Update the Phase Time Differences (Δt) display panel."""
@@ -3736,6 +3951,41 @@ class SeismicPickerQT(QMainWindow):
         self._sac_header_dialog.show()
         self._sac_header_dialog.raise_()
         self._sac_header_dialog.activateWindow()
+
+    def open_wadati_dialog(self):
+        """Open or show the Standard and Modified Wadati analysis plugin."""
+        if not self.original_stream:
+            QMessageBox.warning(
+                self,
+                "No Data Loaded",
+                "Please load seismic waveforms before opening Wadati Analysis."
+            )
+            return
+
+        try:
+            try:
+                from config.plugins.wadati_plugin import WadatiAnalysisDialog
+            except ImportError:
+                try:
+                    from plugins.wadati_plugin import WadatiAnalysisDialog  # ty: ignore[import-not-found]
+                except ImportError:
+                    from wadati_plugin import WadatiAnalysisDialog  # ty: ignore[import-not-found]
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.critical(
+                self,
+                "Plugin Error",
+                f"Failed to load Wadati Analysis plugin:\n\n{e}"
+            )
+            return
+
+        if not hasattr(self, "_wadati_dialog") or self._wadati_dialog is None:
+            self._wadati_dialog = WadatiAnalysisDialog(parent=self)
+        else:
+            self._wadati_dialog.refresh_data()
+
+        self._wadati_dialog.show()
+        self._wadati_dialog.raise_()
+        self._wadati_dialog.activateWindow()
 
     def open_documentation_viewer(self, doc="README.md"):
         """Open or show the in-app documentation viewer dialog."""

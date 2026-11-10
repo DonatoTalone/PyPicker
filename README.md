@@ -21,7 +21,6 @@
 </p>
 
 <p align="center">
-  <sub>🎬 <i>Full-resolution demonstration video available in <a href="doc/images/PyPicker_use.mp4"><code>doc/images/PyPicker_use.mp4</code></a></i></sub>
 </p>
 
 ---
@@ -38,6 +37,7 @@
 - **Coherent Theoretical Arrivals**: Shared 1D velocity structure between Hypo71 and ObsPy TauP theoretical arrival curves.
 - **Interactive Geographic Map**: Cartopy-powered map with DEM relief, transparency control, FDSN station inventory (INGV), and live epicenter tracking.
 - **SAC Header Editor**: Visualize and modify the SAC header in table format.
+- **Interactive Wadati Plot**: Control on picking coherence and estimation of Vp/Vs ratio.
 - **Pick Import & Export**: Full compatibility with CSV, QuakeML, and SeisGram2K `.pick` formats.
 - **Customizable Environment**: Configurable shortcuts and colors via persistent user configuration (`~/.config/PyPicker/`).
 
@@ -89,6 +89,7 @@ Shortcuts can be customized in `~/.config/PyPicker/config.json`.
 | `L` | Open Hypo71 Earthquake Location dialog |
 | `M` | Open Geographic Map (DEM, stations & epicenter) |
 | `H` | Open the SAC header |
+| `W` | Calculate Wadati plot |
 | `Ctrl+S` | Save picks to SAC headers |
 | `Ctrl+E` | Export picks (CSV / QuakeML) |
 
@@ -106,6 +107,8 @@ Full, detailed documentation is available in the [`doc/`](./doc/) directory:
 - [**Hypocentral Earthquake Location**](./doc/hypo71_localization.md) — Geiger's method, 1D crustal velocity models, Trial Depth ($Z_{TR}$), residuals, and saving to `h71_localized/`.
 - [**Earthquake Focal Mechanism**](./doc/focmec_focal_mechanism.md) — Double-couple point sources, Aki & Richards convention, P-wave polarities, FOCMEC grid search, and stereographic beachball visualization.
 - [**Geographic Map & Seismic Stations**](./doc/geographic_map.md) — Interactive Cartopy map, DEM relief in transparency, FDSN station catalog (INGV), and live epicenter tracking.
+- [**SAC Header**](./doc/sac_header.md) — View SAC Header as table and edit items.
+- [**Wadati Plot**](./doc/wadati_analysis.md) — Interactive Wadati plot with information about Vp/Vs ratio.
 - [**Building & Releases**](./doc/building_and_release.md) — Compiling executables with PyInstaller and the GitHub Actions CI/CD matrix.
 
 ---

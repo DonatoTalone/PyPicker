@@ -39,6 +39,7 @@ DEFAULT_CONFIG = {
         "localize": "L",
         "open_map": "M",
         "open_header": "H",
+        "open_wadati": "W",
         "help_doc": "F1",
     },
     "colors": {

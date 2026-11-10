@@ -15,7 +15,7 @@ from obspy.taup import TauPyModel
 from PyQt6.QtCore import QStandardPaths
 from PyQt6.QtGui import QIcon
 
-__version__ = "3.0.1"
+__version__ = "3.1.0"
 
 APP_CONFIG_FOLDER = "PyPicker"
 
@@ -38,6 +38,8 @@ DEFAULT_CONFIG = {
         "pick_s": "2",
         "localize": "L",
         "open_map": "M",
+        "open_header": "H",
+        "open_wadati": "W",
         "help_doc": "F1",
     },
     "colors": {

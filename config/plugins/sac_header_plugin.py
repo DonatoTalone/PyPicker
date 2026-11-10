@@ -326,8 +326,8 @@ class SACHeaderDialog(QDialog):
 
         with_sac = sum(1 for record in records if record["has_sac"])
         self.status_bar.showMessage(
-            f"Tracce: {len(records)} | Con header SAC: {with_sac} | "
-            f"Campi SAC distinti: {len(ordered_keys)}"
+            f"Traces: {len(records)} | With SAC Headers: {with_sac} | "
+            f"Distinct SAC Fields: {len(ordered_keys)}"
         )
 
     def update_stream(self, stream):

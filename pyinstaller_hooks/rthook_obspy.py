@@ -46,17 +46,75 @@ import builtins  # noqa: E402
 
 builtins.open = _safe_builtins_open
 
-# --- 2. Prevent ObsPy from querying Git for PyPicker repository version ---
+# --- 2. Clean subprocess env and prevent ObsPy from querying Git for PyPicker repository version ---
+def _clean_subprocess_env(kwargs):
+    if sys.platform != "win32" and getattr(sys, "frozen", False):
+        env = kwargs.get("env")
+        if env is None:
+            env = os.environ.copy()
+        else:
+            env = dict(env)
+        if "LD_LIBRARY_PATH_ORIG" in env:
+            env["LD_LIBRARY_PATH"] = env["LD_LIBRARY_PATH_ORIG"]
+        else:
+            env.pop("LD_LIBRARY_PATH", None)
+        kwargs["env"] = env
+
+
 _real_check_output = subprocess.check_output
 
 
 def _safe_check_output(cmd, *args, **kwargs):
     if isinstance(cmd, (list, tuple)) and cmd and cmd[0] == "git":
         raise subprocess.CalledProcessError(1, cmd, output=b"")
+    _clean_subprocess_env(kwargs)
     return _real_check_output(cmd, *args, **kwargs)
 
 
 subprocess.check_output = _safe_check_output
+
+_real_popen = subprocess.Popen
+
+
+def _safe_popen(cmd, *args, **kwargs):
+    _clean_subprocess_env(kwargs)
+    return _real_popen(cmd, *args, **kwargs)
+
+
+subprocess.Popen = _safe_popen
+
+if hasattr(subprocess, "run"):
+    _real_run = subprocess.run
+
+    def _safe_run(cmd, *args, **kwargs):
+        if isinstance(cmd, (list, tuple)) and cmd and cmd[0] == "git":
+            raise subprocess.CalledProcessError(1, cmd, output=b"")
+        _clean_subprocess_env(kwargs)
+        return _real_run(cmd, *args, **kwargs)
+
+    subprocess.run = _safe_run
+
+# --- Configure SSL CA bundle for Cartopy / urllib in frozen app ---
+try:
+    import certifi
+    import ssl
+
+    cafile = certifi.where()
+    if cafile and os.path.exists(cafile):
+        os.environ.setdefault("SSL_CERT_FILE", cafile)
+        os.environ.setdefault("REQUESTS_CA_BUNDLE", cafile)
+        _orig_create_default_context = ssl.create_default_context
+
+        def _safe_create_default_context(*args, **kwargs):
+            if "cafile" not in kwargs or kwargs["cafile"] is None:
+                kwargs["cafile"] = cafile
+            return _orig_create_default_context(*args, **kwargs)
+
+        ssl.create_default_context = _safe_create_default_context
+        ssl._create_default_https_context = _safe_create_default_context
+except Exception:
+    pass
+
 
 # --- 3. Patch inspect.getfile for ObsPy in frozen executables (prevent re-wrapping) ---
 if not getattr(inspect.getfile, "_is_obspy_patched", False):

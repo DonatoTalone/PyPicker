@@ -169,6 +169,10 @@ if not hasattr(pg.GraphicsView, "autoRangeEnabled"):
 if not hasattr(pg.GraphicsLayoutWidget, "autoRangeEnabled"):
     pg.GraphicsLayoutWidget.autoRangeEnabled = lambda self: [False, False]  # ty: ignore[attr-defined]  # ty: ignore[unresolved-attribute, ignore-comment-unknown-rule]
 from obspy import Stream, UTCDateTime, read
+
+# ObsPy's UTCDateTime.__hash__ returns None, which in Python 3.12+ raises
+# "TypeError: __hash__ method should return an integer". Make it return a valid integer hash.
+UTCDateTime.__hash__ = lambda self: hash(getattr(self, "ns", int(self.timestamp * 1e9)))
 from PyQt6.QtCore import QRectF, Qt, QTimer, QUrl
 from PyQt6.QtGui import (
     QColor,
@@ -2856,7 +2860,31 @@ class SeismicPickerQT(QMainWindow):
             p.meta["trace_id_start"] = trace_id_start
 
         if not hasattr(self, "show_picks") or self.show_picks.isChecked():
-            for pk, pick_time, color in self._picks_by_event_key.get(event_key, ()):
+            picks_to_draw = self._picks_by_event_key.get(event_key, ())
+            if not picks_to_draw:
+                # Fallback: draw any pick matching this station that falls within trace bounds
+                sta = tr.stats.station
+                fallback_picks = []
+                c_cfg = self.config.get("colors", {})
+                for pk in self.picks:
+                    if pk.get("sta") == sta:
+                        try:
+                            pk_t = UTCDateTime(pk.get("abs_t"))
+                            t_rel = pk_t - tr.stats.starttime
+                            if 0 <= t_rel <= dur:
+                                ph = (pk.get("phase") or "").strip().upper()
+                                if ph.startswith("P"):
+                                    col = QColor(c_cfg.get("pick_p", "#2ecc71"))
+                                elif ph.startswith("S"):
+                                    col = QColor(c_cfg.get("pick_s", "#e056fd"))
+                                else:
+                                    col = QColor(c_cfg.get("pick_line", "#8e44ad"))
+                                fallback_picks.append((pk, pk_t, col))
+                        except Exception:
+                            pass
+                picks_to_draw = fallback_picks
+
+            for pk, pick_time, color in picks_to_draw:
                 t_rel = pick_time - tr.stats.starttime
                 if 0 <= t_rel <= dur:
                     self._add_visual_pick(
@@ -3326,36 +3354,47 @@ class SeismicPickerQT(QMainWindow):
         """Update only pick lines and labels on existing plots without rebuilding."""
         if not self.plots:
             return
-        self._prepare_pick_render_index()
-        theo_arrs = self._get_theoretical_arrivals()
-        trace_lookup = {self._trace_key(tr): tr for tr in self.original_stream}
-        trace_id_start_lookup = {
-            (tr.id, tr.stats.starttime.ns): tr for tr in self.original_stream
-        }
-        simple_lookup = {}
-        for tr in self.original_stream:
-            simple_lookup.setdefault(
-                (tr.stats.station, tr.stats.channel, tr.stats.starttime), tr
-            )
-        for plot in self.plots:
-            meta = getattr(plot, "meta", None)
-            if not meta:
-                continue
-            for item in getattr(plot, "pick_items", ()):
-                try:
-                    plot.removeItem(item)
-                except Exception:  # noqa: BLE001, S110
-                    pass
-            plot.pick_items = []
-            matched_tr = trace_lookup.get(meta.get("trace_key"))
-            if matched_tr is None:
-                matched_tr = trace_id_start_lookup.get(meta.get("trace_id_start"))
-            if matched_tr is None:
-                matched_tr = simple_lookup.get(
-                    (meta.get("sta"), meta.get("cha"), meta.get("st"))
+        try:
+            self._prepare_pick_render_index()
+            theo_arrs = self._get_theoretical_arrivals()
+            trace_lookup = {self._trace_key(tr): tr for tr in self.original_stream}
+            trace_id_start_lookup = {
+                (tr.id, tr.stats.starttime.ns): tr for tr in self.original_stream
+            }
+            simple_lookup = {}
+            for tr in self.original_stream:
+                simple_lookup.setdefault(
+                    (tr.stats.station, tr.stats.channel, tr.stats.starttime.ns), tr
                 )
-            if matched_tr is not None:
-                self._draw_picks(plot, matched_tr, theo_arrs)
+            for plot in self.plots:
+                meta = getattr(plot, "meta", None)
+                if not meta:
+                    continue
+                for item in getattr(plot, "pick_items", ()):
+                    try:
+                        plot.removeItem(item)
+                    except Exception:  # noqa: BLE001, S110
+                        pass
+                plot.pick_items = []
+                matched_tr = trace_lookup.get(meta.get("trace_key"))
+                if matched_tr is None:
+                    matched_tr = trace_id_start_lookup.get(meta.get("trace_id_start"))
+                if matched_tr is None:
+                    st_meta = meta.get("st")
+                    st_ns = getattr(st_meta, "ns", st_meta)
+                    matched_tr = simple_lookup.get(
+                        (meta.get("sta"), meta.get("cha"), st_ns)
+                    )
+                if matched_tr is None:
+                    matched_tr = next(
+                        (tr for tr in self.original_stream
+                         if tr.stats.station == meta.get("sta") and tr.stats.channel == meta.get("cha")),
+                        None,
+                    )
+                if matched_tr is not None:
+                    self._draw_picks(plot, matched_tr, theo_arrs)
+        except Exception:
+            logging.exception("Error updating pick overlays")
 
     def update_phase_differences(self):
         """Update the Phase Time Differences (Δt) display panel."""
@@ -3511,30 +3550,34 @@ class SeismicPickerQT(QMainWindow):
 
             prefix = "▶ "
             curr_tag = f" <span style='color: {hl_color};'>[Current]</span>"
-            pks = sorted(sta_picks[current_sta], key=lambda p: _get_utc(p))
-            html.append(f"<br><b style='color: {head_color};'>{prefix}STATION: {current_sta}</b>{curr_tag} ({len(pks)} picks)<br>")
-            p_pks = [p for p in pks if (p.get("phase") or "").strip().upper().startswith("P")]
-            s_pks = [p for p in pks if (p.get("phase") or "").strip().upper().startswith("S")]
-            if p_pks and s_pks:
-                dt_sp = float(_get_utc(s_pks[0]) - _get_utc(p_pks[0]))
-                p_name = p_pks[0].get("phase")
-                s_name = s_pks[0].get("phase")
-                html.append(f"&nbsp;• <b style='color: {hl_color};'>{s_name} - {p_name}:</b> <code>{dt_sp:.3f} s</code><br>")
+            pks = sorted(sta_picks.get(current_sta, []), key=lambda p: _get_utc(p))
+            if current_sta:
+                html.append(f"<br><b style='color: {head_color};'>{prefix}STATION: {current_sta}</b>{curr_tag} ({len(pks)} picks)<br>")
+                if not pks:
+                    html.append("&nbsp;<i>No picks for this station.</i><br>")
+                else:
+                    p_pks = [p for p in pks if (p.get("phase") or "").strip().upper().startswith("P")]
+                    s_pks = [p for p in pks if (p.get("phase") or "").strip().upper().startswith("S")]
+                    if p_pks and s_pks:
+                        dt_sp = float(_get_utc(s_pks[0]) - _get_utc(p_pks[0]))
+                        p_name = p_pks[0].get("phase")
+                        s_name = s_pks[0].get("phase")
+                        html.append(f"&nbsp;• <b style='color: {hl_color};'>{s_name} - {p_name}:</b> <code>{dt_sp:.3f} s</code><br>")
 
-            if len(pks) >= 2:
-                html.append("&nbsp;<b>Pairwise Δt:</b><br>")
-                for i in range(len(pks)):
-                    for j in range(i + 1, len(pks)):
-                        p1 = pks[i]
-                        p2 = pks[j]
-                        dt = float(_get_utc(p2) - _get_utc(p1))
-                        ph1 = p1.get("phase", "?")
-                        ph2 = p2.get("phase", "?")
-                        html.append(f"&nbsp;&nbsp;{ph2} - {ph1}: <code>{dt:.3f} s</code><br>")
-            else:
-                pk = pks[0]
-                t_str = _get_utc(pk).strftime("%H:%M:%S.%f")[:-3]
-                html.append(f"&nbsp;• {pk.get('phase')}: {t_str} (single pick)<br>")
+                    if len(pks) >= 2:
+                        html.append("&nbsp;<b>Pairwise Δt:</b><br>")
+                        for i in range(len(pks)):
+                            for j in range(i + 1, len(pks)):
+                                p1 = pks[i]
+                                p2 = pks[j]
+                                dt = float(_get_utc(p2) - _get_utc(p1))
+                                ph1 = p1.get("phase", "?")
+                                ph2 = p2.get("phase", "?")
+                                html.append(f"&nbsp;&nbsp;{ph2} - {ph1}: <code>{dt:.3f} s</code><br>")
+                    else:
+                        pk = pks[0]
+                        t_str = _get_utc(pk).strftime("%H:%M:%S.%f")[:-3]
+                        html.append(f"&nbsp;• {pk.get('phase')}: {t_str} (single pick)<br>")
 
             html.append("</div>")
             self.phase_diff_text.setHtml("".join(html))

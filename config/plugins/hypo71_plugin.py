@@ -262,6 +262,18 @@ def run_hypo71_localization(
     # Sort residuals by station and phase
     residuals.sort(key=lambda r: (r["station"], r["phase"]))
 
+    # Calculate residual statistics
+    residuals_stats = {}
+    try:
+        import picker_utils_qt as _utils
+        residuals_stats = _utils.calculate_residual_statistics(residuals)
+    except Exception:
+        try:
+            import config.picker_utils_qt as _utils
+            residuals_stats = _utils.calculate_residual_statistics(residuals)
+        except Exception:
+            pass
+
     return {
         "latitude": float(lat),
         "longitude": float(lon),
@@ -275,6 +287,8 @@ def run_hypo71_localization(
         "phases_used": int(sp.num_phases),
         "stations_used": int(sp.num_stations),
         "residuals": residuals,
+        "residuals_stats": residuals_stats,
         "missing_stations": missing_stations,
         "velocity_model_name": getattr(vmod, "name", "1D Model"),
     }
+

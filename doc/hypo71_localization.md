@@ -155,6 +155,24 @@ The lower table provides individual residuals for every arrival:
 - **Distance ($km$) & Azimuth ($^\circ$)**: Epicenter-to-station distance and direction.
 - **Weight**: Inversion weight assigned by the solver.
 
+### Residual Statistics Summary
+Directly below the phase residuals, a dedicated summary table reports comprehensive metrics for **P Phases**, **S Phases**, and **Total (All Phases)**:
+- **N**: Count of valid phase arrivals used.
+- **Mean ($s$)**: Arithmetic average residual ($\mu$).
+- **Median ($s$)**: Median residual.
+- **RMS ($s$)**: Root-mean-square residual ($\sqrt{\frac{1}{N}\sum r_i^2}$).
+- **MAE ($s$)**: Mean absolute error ($\frac{1}{N}\sum |r_i|$).
+- **Std Dev ($s$)**: Sample standard deviation ($\sigma$).
+- **Min / Max ($s$)**: Minimum and maximum residual bounds.
+
+### Interactive Residual Diagnostics Window (`Residual Plots`)
+Clicking **Residual Plots** (or via menu **Plugins -> Residual Diagnostics...**) opens an interactive 3-panel diagnostic window inspired by the Wadati plugin:
+1. **Residuals by Pick Index**: Scatter plot ordered by arrival sequence, separating P (blue) and S (red) arrivals with a zero-residual reference line.
+2. **Residuals vs Epicentral Distance**: Highlights any systematic distance-dependent drift or velocity model layering discrepancies.
+3. **Residuals vs Source-to-Station Azimuth**: Evaluates azimuthal coverage ($0^\circ - 360^\circ$) and potential lateral velocity anomalies.
+- **Full Interactivity**: Hovering over any scatter point shows a tooltip with station code, phase, observed/calculated time, residual, distance, azimuth, and inversion weight. Left-clicking pins the annotation in place.
+- **Exporting Options**: Dedicated buttons allow saving high-resolution figures (**PNG** / **PDF** at 300 DPI), raw data (**CSV**), and formatted summary text (**TXT**).
+
 ---
 
 ## 6. Output Management & Trace Updating
@@ -163,12 +181,13 @@ The lower table provides individual residuals for every arrival:
 Clicking **Save in h71_localized/**:
 1. Creates a dedicated folder `h71_localized/` inside the parent directory of the original SAC files.
 2. Saves relocated SAC traces with the suffix `_hypo71` (e.g., `trace_hypo71.sac`).
-3. Updates all standard SAC event and distance headers:
+3. Automatically exports `residuals.csv` and `residuals_summary.txt` alongside the relocated waveforms.
+4. Updates all standard SAC event and distance headers:
    - `evla`, `evlo`, `evdp`: Relocated event coordinates and depth.
    - `o`: Origin time offset relative to trace start (`b`).
    - `dist`, `az`, `baz`, `gcarc`: Epicentral distance and azimuths calculated via WGS84 geodesic.
    - `stla`, `stlo`, `stel`: Station coordinates (if recovered via FDSN).
-4. **Original files remain completely untouched.**
+5. **Original files remain completely untouched.**
 
 ### Applying to In-Memory Traces (`Apply to In-Memory Traces`)
 Clicking **Apply to In-Memory Traces**:

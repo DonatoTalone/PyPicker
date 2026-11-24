@@ -2296,3 +2296,352 @@ def update_seismic_catalog(catalog_path, event_dict):
             writer.writerow(full_r)
 
     return path
+
+
+# -----------------------------------------------------------------------------
+# Travel-Time Residuals & Statistics
+# -----------------------------------------------------------------------------
+
+def calculate_residual_statistics(residuals):
+    """
+    Compute statistical metrics for P, S, and Total travel-time residuals.
+
+    Parameters
+    ----------
+    residuals : list of dict
+        Residual dictionaries containing at least 'phase' (or 'phase_observed')
+        and 'residual_sec' (or 'residual_obs_minus_calc_s').
+
+    Returns
+    -------
+    dict
+        Dictionary with keys 'P', 'S', and 'Total'. Each sub-dictionary has:
+        'count', 'mean', 'median', 'rms', 'mae', 'std', 'min', 'max'.
+    """
+    import math
+    from statistics import mean, median
+
+    def _calc_metrics(vals):
+        if not vals:
+            return {
+                "count": 0,
+                "mean": None,
+                "median": None,
+                "rms": None,
+                "mae": None,
+                "std": None,
+                "min": None,
+                "max": None,
+            }
+        n = len(vals)
+        m = float(mean(vals))
+        med = float(median(vals))
+        rms = float(math.sqrt(mean(v * v for v in vals)))
+        mae = float(mean(abs(v) for v in vals))
+        if n > 1:
+            variance = sum((v - m) ** 2 for v in vals) / (n - 1)
+            std = float(math.sqrt(max(0.0, variance)))
+        else:
+            std = 0.0
+        return {
+            "count": n,
+            "mean": m,
+            "median": med,
+            "rms": rms,
+            "mae": mae,
+            "std": std,
+            "min": float(min(vals)),
+            "max": float(max(vals)),
+        }
+
+    p_vals = []
+    s_vals = []
+    all_vals = []
+
+    for r in residuals:
+        if not isinstance(r, dict):
+            continue
+        ph = str(r.get("phase") or r.get("phase_observed") or "").strip().upper()
+        res = r.get("residual_sec")
+        if res is None:
+            res = r.get("residual_obs_minus_calc_s")
+        if res is None:
+            continue
+        try:
+            val = float(res)
+            if not math.isfinite(val):
+                continue
+        except (ValueError, TypeError):
+            continue
+
+        all_vals.append(val)
+        if ph.startswith("P"):
+            p_vals.append(val)
+        elif ph.startswith("S"):
+            s_vals.append(val)
+
+    return {
+        "P": _calc_metrics(p_vals),
+        "S": _calc_metrics(s_vals),
+        "Total": _calc_metrics(all_vals),
+    }
+
+
+def calculate_travel_time_residuals(stream, picks, hypocenter=None, model_name=None):
+    """
+    Calculate observed minus calculated travel-time residuals for picks given
+    a hypocenter and velocity model using TauP.
+
+    Parameters
+    ----------
+    stream : obspy.Stream
+        Stream with SAC headers or station metadata.
+    picks : list of dict
+        Picks list with keys: sta, phase, abs_t.
+    hypocenter : dict or None
+        Hypocenter dictionary with latitude, longitude, depth_km, origin_time.
+        If None, attempts to extract from stream SAC headers (evla, evlo, evdp, o).
+    model_name : str or None
+        Velocity model name or JSON path. Defaults to active velocity model.
+
+    Returns
+    -------
+    tuple (residuals, stats)
+        residuals : list of dict
+        stats : dict of statistics
+    """
+    import math
+    from obspy import UTCDateTime
+    from obspy.geodetics import degrees2kilometers, gps2dist_azimuth, locations2degrees
+
+    if model_name is None:
+        try:
+            cfg = load_config()
+            model_name = cfg.get("defaults", {}).get("velocity_model", "velocity_model.json")
+        except Exception:
+            model_name = "velocity_model.json"
+
+    # Extract or validate hypocenter
+    evla, evlo, depth_km, origin_time = None, None, None, None
+    if isinstance(hypocenter, dict):
+        evla = hypocenter.get("latitude") or hypocenter.get("evla")
+        evlo = hypocenter.get("longitude") or hypocenter.get("evlo")
+        depth_km = hypocenter.get("depth_km") or hypocenter.get("evdp")
+        origin_time = hypocenter.get("origin_time") or hypocenter.get("ot")
+
+    if any(v is None for v in (evla, evlo, depth_km, origin_time)) and stream:
+        for tr in stream:
+            sac = getattr(tr.stats, "sac", {})
+            if all(k in sac and sac[k] != -12345.0 for k in ("evla", "evlo")):
+                evla = float(sac["evla"])
+                evlo = float(sac["evlo"])
+                evdp = sac.get("evdp", 0.0)
+                if evdp != -12345.0 and evdp is not None:
+                    depth_km = float(evdp / 1000.0 if evdp > 800.0 else max(0.0, evdp))
+                if "o" in sac and sac["o"] != -12345.0 and sac["o"] is not None:
+                    b = sac.get("b", 0.0)
+                    if b == -12345.0 or b is None:
+                        b = 0.0
+                    origin_time = tr.stats.starttime - float(b) + float(sac["o"])
+                break
+
+    if any(v is None for v in (evla, evlo, depth_km, origin_time)):
+        raise ValueError("Hypocenter (latitude, longitude, depth, origin_time) is required to calculate travel-time residuals.")
+
+    if not isinstance(origin_time, UTCDateTime):
+        origin_time = UTCDateTime(origin_time)
+
+    # Extract station metadata
+    station_meta = {}
+    if stream:
+        for tr in stream:
+            sta = tr.stats.station
+            if sta in station_meta:
+                continue
+            sac = getattr(tr.stats, "sac", {})
+            stla = sac.get("stla")
+            stlo = sac.get("stlo")
+            stel = sac.get("stel", 0.0)
+            if stel == -12345.0 or stel is None:
+                stel = 0.0
+            if stla is not None and stlo is not None and stla != -12345.0 and stlo != -12345.0:
+                station_meta[sta] = (float(stla), float(stlo), float(stel))
+
+    try:
+        model = get_or_create_taup_model(model_name)
+    except Exception as e:
+        print(f"Error loading TauP velocity model {model_name}: {e}")
+        model = None
+
+    p_phases = ("p", "P", "Pg", "Pn")
+    s_phases = ("s", "S", "Sg", "Sn")
+
+    residuals = []
+    travel_time_cache = {}
+
+    for pk in picks:
+        sta = pk.get("sta")
+        ph = str(pk.get("phase", "")).strip().upper()
+        if ph not in ("P", "S"):
+            continue
+        if sta not in station_meta:
+            continue
+
+        stla, stlo, stel = station_meta[sta]
+        try:
+            dist_deg = float(locations2degrees(float(evla), float(evlo), stla, stlo))
+            dist_km = float(degrees2kilometers(dist_deg))
+            _, az, _ = gps2dist_azimuth(float(evla), float(evlo), stla, stlo)
+            az = float(az) % 360.0
+        except Exception:
+            continue
+
+        obs_time = UTCDateTime(pk["abs_t"])
+        obs_tt = float(obs_time - origin_time)
+
+        calc_time = None
+        calc_tt = None
+        res_sec = None
+
+        if model is not None:
+            phase_family = "P" if ph.startswith("P") else "S"
+            phase_list = list(p_phases) if phase_family == "P" else list(s_phases)
+            cache_key = (round(float(depth_km), 5), round(dist_deg, 6), phase_family)
+            if cache_key not in travel_time_cache:
+                try:
+                    travel_time_cache[cache_key] = model.get_travel_times(
+                        source_depth_in_km=max(0.0, float(depth_km)),
+                        distance_in_degree=dist_deg,
+                        phase_list=phase_list,
+                    )
+                except Exception:
+                    travel_time_cache[cache_key] = []
+
+            arrs = travel_time_cache[cache_key]
+            if arrs:
+                arr = min(arrs, key=lambda a: a.time)
+                calc_tt = float(arr.time)
+                calc_time = origin_time + calc_tt
+                res_sec = obs_tt - calc_tt
+
+        residuals.append({
+            "station": sta,
+            "phase": ph,
+            "observed_time": obs_time,
+            "calculated_time": calc_time,
+            "travel_time_obs_s": obs_tt,
+            "travel_time_calc_s": calc_tt,
+            "residual_sec": res_sec,
+            "distance_deg": dist_deg,
+            "distance_km": dist_km,
+            "azimuth_deg": az,
+            "station_elevation_m": stel,
+            "weight": float(pk.get("weight", 1.0)),
+            "model": str(model_name),
+        })
+
+    residuals.sort(key=lambda r: (r["station"], r["phase"]))
+    stats = calculate_residual_statistics(residuals)
+    return residuals, stats
+
+
+def format_residual_statistics_summary(residuals_or_stats, model_name=None, hypocenter=None):
+    """
+    Format residual statistics into a clean text summary.
+    """
+    if isinstance(residuals_or_stats, dict) and "Total" in residuals_or_stats:
+        stats = residuals_or_stats
+    else:
+        stats = calculate_residual_statistics(residuals_or_stats)
+
+    model_label = model_name or "1D Velocity Model"
+    lines = [
+        "=" * 76,
+        f"RESIDUAL STATISTICS SUMMARY  (Model: {model_label})",
+        "Residual convention: observed travel time - calculated travel time",
+        "=" * 76,
+    ]
+
+    if isinstance(hypocenter, dict):
+        ot = hypocenter.get("origin_time")
+        ot_str = ot.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if hasattr(ot, "strftime") else str(ot)
+        lines.append(
+            f"Hypocenter: Lat {hypocenter.get('latitude', 0.0):.4f}°, "
+            f"Lon {hypocenter.get('longitude', 0.0):.4f}°, "
+            f"Depth {hypocenter.get('depth_km', 0.0):.2f} km | OT: {ot_str} UTC"
+        )
+        if "rms" in hypocenter:
+            lines.append(f"Solver RMS: {hypocenter['rms']:.3f} s | Quality: {hypocenter.get('quality', '--')}")
+        lines.append("-" * 76)
+
+    def _fmt(val, decimals=4):
+        return f"{val:+.{decimals}f} s" if val is not None else "n/a"
+
+    def _fmt_pos(val, decimals=4):
+        return f"{val:.{decimals}f} s" if val is not None else "n/a"
+
+    for cat in ("P", "S", "Total"):
+        s = stats.get(cat, {})
+        n = s.get("count", 0)
+        label = f"{cat} Phases" if cat != "Total" else "Total (All Phases)"
+        if n == 0:
+            lines.append(f"{label:<20}: N=0 (no valid residuals)")
+            continue
+
+        lines.append(
+            f"{label:<20}: N={n:<3} | Mean={_fmt(s.get('mean'))} | Median={_fmt(s.get('median'))} | "
+            f"RMS={_fmt_pos(s.get('rms'))} | MAE={_fmt_pos(s.get('mae'))} | StdDev={_fmt_pos(s.get('std'))} "
+            f"[Min={_fmt(s.get('min'))}, Max={_fmt(s.get('max'))}]"
+        )
+
+    lines.append("=" * 76)
+    return "\n".join(lines)
+
+
+def export_residuals_to_csv(residuals, output_path, hypocenter=None, model_name=None):
+    """
+    Write pick-level residuals to CSV file.
+    """
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "station", "phase", "observed_time_utc", "calculated_time_utc",
+        "residual_sec", "distance_km", "azimuth_deg", "weight", "model"
+    ]
+    with path.open("w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for r in residuals:
+            obs = r.get("observed_time")
+            calc = r.get("calculated_time")
+            obs_str = obs.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if hasattr(obs, "strftime") else (str(obs) if obs else "")
+            calc_str = calc.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if hasattr(calc, "strftime") else (str(calc) if calc else "")
+            res_val = r.get("residual_sec")
+            dist_val = r.get("distance_km")
+            az_val = r.get("azimuth_deg")
+            wt_val = r.get("weight")
+            writer.writerow({
+                "station": str(r.get("station", "")),
+                "phase": str(r.get("phase", "")),
+                "observed_time_utc": obs_str,
+                "calculated_time_utc": calc_str,
+                "residual_sec": f"{float(res_val):.4f}" if res_val is not None else "",
+                "distance_km": f"{float(dist_val):.2f}" if dist_val is not None else "",
+                "azimuth_deg": f"{float(az_val):.1f}" if az_val is not None else "",
+                "weight": f"{float(wt_val):.2f}" if wt_val is not None else "",
+                "model": str(model_name or r.get("model", "")),
+            })
+    return path
+
+
+def export_residuals_summary(residuals_or_stats, output_path, model_name=None, hypocenter=None):
+    """
+    Write residual statistics text summary file.
+    """
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    summary_text = format_residual_statistics_summary(residuals_or_stats, model_name=model_name, hypocenter=hypocenter)
+    with path.open("w", encoding="utf-8") as f:
+        f.write(summary_text + "\n")
+    return path
+

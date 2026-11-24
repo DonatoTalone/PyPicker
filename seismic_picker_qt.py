@@ -309,7 +309,7 @@ class Hypo71Dialog(QDialog):
         self.setWindowTitle("Hypo71 Earthquake Location")
         theme_mode = getattr(parent, "current_theme_mode", None) or (parent.theme_sel.currentText() if parent and hasattr(parent, "theme_sel") else "System")
         self.setWindowIcon(utils.get_app_icon(theme_mode))
-        self.resize(850, 700)
+        self.resize(920, 800)
         self.results = None
         self.init_ui()
 
@@ -420,6 +420,21 @@ class Hypo71Dialog(QDialog):
         self.res_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)  # ty: ignore[unresolved-attribute]
         self.res_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         res_layout.addWidget(self.res_table)
+
+        # 5b. Residual Statistics Table (Active Velocity Model)
+        self.stats_group = QGroupBox("Residual Statistics (Active Velocity Model)")
+        stats_layout = QVBoxLayout(self.stats_group)
+        self.res_stats_table = QTableWidget(3, 9)
+        self.res_stats_table.setHorizontalHeaderLabels([
+            "Phase", "N", "Mean (s)", "Median (s)", "RMS (s)", "MAE (s)", "Std Dev (s)", "Min (s)", "Max (s)"
+        ])
+        self.res_stats_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)  # ty: ignore[unresolved-attribute]
+        self.res_stats_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.res_stats_table.setMaximumHeight(115)
+        self._init_empty_stats_table()
+        stats_layout.addWidget(self.res_stats_table)
+        res_layout.addWidget(self.stats_group)
+
         layout.addWidget(res_group)
 
         # 6. Bottom Actions
@@ -430,6 +445,20 @@ class Hypo71Dialog(QDialog):
         self.btn_save_localized.setEnabled(False)
         self.btn_save_localized.clicked.connect(self.save_localized_files)
         act_layout.addWidget(self.btn_save_localized)
+
+        self.btn_res_plots = QPushButton("Residual Plots")
+        self.btn_res_plots.setStyleSheet("font-weight: bold; background-color: #8e44ad; color: white;")
+        self.btn_res_plots.setEnabled(False)
+        self.btn_res_plots.setToolTip("Open interactive residual diagnostic plots (Pick index, Distance, Azimuth)")
+        self.btn_res_plots.clicked.connect(self.open_residual_diagnostics)
+        act_layout.addWidget(self.btn_res_plots)
+
+        self.btn_export_res = QPushButton("Export Residuals...")
+        self.btn_export_res.setStyleSheet("font-weight: bold; background-color: #2980b9; color: white;")
+        self.btn_export_res.setEnabled(False)
+        self.btn_export_res.setToolTip("Export residuals CSV and summary statistics text file")
+        self.btn_export_res.clicked.connect(self.export_residuals_dialog)
+        act_layout.addWidget(self.btn_export_res)
 
         self.btn_focmec = QPushButton("Focal Mechanism (FOCMEC)")
         self.btn_focmec.setStyleSheet("font-weight: bold; background-color: #16a085; color: white;")
@@ -446,6 +475,109 @@ class Hypo71Dialog(QDialog):
         layout.addLayout(act_layout)
 
         self.on_reload_model()
+
+    def _init_empty_stats_table(self):
+        """Initialize stats table with empty placeholders."""
+        self.res_stats_table.setRowCount(3)
+        categories = ["P Phases", "S Phases", "Total"]
+        for row, cat in enumerate(categories):
+            self.res_stats_table.setItem(row, 0, QTableWidgetItem(cat))
+            for col in range(1, 9):
+                self.res_stats_table.setItem(row, col, QTableWidgetItem("--"))
+
+    def _populate_stats_table(self, stats):
+        """Populate stats table with calculated residual metrics."""
+        self._init_empty_stats_table()
+        if not stats:
+            return
+
+        cat_keys = [("P Phases", "P"), ("S Phases", "S"), ("Total", "Total")]
+        for row, (label, key) in enumerate(cat_keys):
+            s = stats.get(key, {})
+            n = s.get("count", 0)
+            item_lbl = QTableWidgetItem(label)
+            item_lbl.setFont(QFont("sans-serif", 9, QFont.Weight.Bold))
+            self.res_stats_table.setItem(row, 0, item_lbl)
+            if n == 0:
+                self.res_stats_table.setItem(row, 1, QTableWidgetItem("0"))
+                continue
+
+            def _fmt_s(val, plus=True):
+                if val is None:
+                    return "--"
+                return f"{val:+.3f}" if plus else f"{val:.3f}"
+
+            self.res_stats_table.setItem(row, 1, QTableWidgetItem(str(n)))
+            self.res_stats_table.setItem(row, 2, QTableWidgetItem(_fmt_s(s.get("mean"), True)))
+            self.res_stats_table.setItem(row, 3, QTableWidgetItem(_fmt_s(s.get("median"), True)))
+            self.res_stats_table.setItem(row, 4, QTableWidgetItem(_fmt_s(s.get("rms"), False)))
+            self.res_stats_table.setItem(row, 5, QTableWidgetItem(_fmt_s(s.get("mae"), False)))
+            self.res_stats_table.setItem(row, 6, QTableWidgetItem(_fmt_s(s.get("std"), False)))
+            self.res_stats_table.setItem(row, 7, QTableWidgetItem(_fmt_s(s.get("min"), True)))
+            self.res_stats_table.setItem(row, 8, QTableWidgetItem(_fmt_s(s.get("max"), True)))
+
+    def open_residual_diagnostics(self):
+        """Open interactive residual diagnostic plots dialog."""
+        if not self.results:
+            return
+        residuals = self.results.get("residuals", [])
+        if not residuals:
+            QMessageBox.information(self, "No Residuals", "No phase residuals available to plot.")
+            return
+
+        try:
+            try:
+                from residuals_plugin import ResidualDiagnosticsDialog
+            except ImportError:
+                from config.plugins.residuals_plugin import ResidualDiagnosticsDialog
+        except ImportError as exc:
+            QMessageBox.critical(self, "Plugin Error", f"Could not load Residual Diagnostics plugin:\n\n{exc}")
+            return
+
+        diag = ResidualDiagnosticsDialog(
+            residuals=residuals,
+            hypocenter=self.results,
+            model_name=self.results.get("velocity_model_name"),
+            stats=self.results.get("residuals_stats"),
+            parent=self.parent or self,
+        )
+        diag.exec()
+
+    def export_residuals_dialog(self):
+        """Export residuals CSV and summary TXT files to selected destination."""
+        if not self.results:
+            return
+        residuals = self.results.get("residuals", [])
+        if not residuals:
+            QMessageBox.information(self, "No Residuals", "No residuals to export.")
+            return
+
+        save_dir = QFileDialog.getExistingDirectory(
+            self,
+            "Select Directory to Export Residuals",
+            str(Path.home()),
+        )
+        if not save_dir:
+            return
+
+        target_dir = Path(save_dir)
+        try:
+            model_name = self.results.get("velocity_model_name", "1D Model")
+            stats = self.results.get("residuals_stats")
+            csv_path = target_dir / "residuals.csv"
+            txt_path = target_dir / "residuals_summary.txt"
+
+            utils.export_residuals_to_csv(residuals, csv_path, hypocenter=self.results, model_name=model_name)
+            utils.export_residuals_summary(stats or residuals, txt_path, model_name=model_name, hypocenter=self.results)
+
+            QMessageBox.information(
+                self,
+                "Export Complete",
+                f"Successfully exported residuals to:\n• {csv_path}\n• {txt_path}"
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", f"Failed to export residuals:\n\n{e}")
+
 
     def open_focmec_from_loc(self):
         """Open FOCMEC dialog passing the resolved hypocenter."""
@@ -605,12 +737,22 @@ class Hypo71Dialog(QDialog):
                 self.res_table.setItem(row, 6, QTableWidgetItem(az_str))
                 self.res_table.setItem(row, 7, QTableWidgetItem(wt_str))
 
+            # Populate Residual Statistics Table
+            residuals = res.get("residuals", [])
+            stats = res.get("residuals_stats")
+            if not stats and utils:
+                stats = utils.calculate_residual_statistics(residuals)
+                res["residuals_stats"] = stats
+            self._populate_stats_table(stats)
+
             self.status_label.setText(
                 f"Location completed successfully in {ni} iterations! RMS = {rms:.3f} s."
             )
             self.status_label.setStyleSheet("color: #27ae60; font-weight: bold;")
             self.btn_save_localized.setEnabled(True)
             self.btn_focmec.setEnabled(True)
+            self.btn_res_plots.setEnabled(bool(residuals))
+            self.btn_export_res.setEnabled(bool(residuals))
 
             # Update SAC headers (coordinates, depth, origin time, distance) and auto-sort waveforms by distance
             if self.parent and hasattr(self.parent, "original_stream") and self.parent.original_stream:
@@ -717,10 +859,22 @@ class Hypo71Dialog(QDialog):
             )
             if saved:
                 save_dir = saved[0].parent
+                # Export residuals CSV and summary TXT into h71_localized/
+                residuals = self.results.get("residuals", [])
+                if residuals and utils:
+                    model_name = self.results.get("velocity_model_name", "1D Model")
+                    stats = self.results.get("residuals_stats")
+                    try:
+                        utils.export_residuals_to_csv(residuals, save_dir / "residuals.csv", hypocenter=self.results, model_name=model_name)
+                        utils.export_residuals_summary(stats or residuals, save_dir / "residuals_summary.txt", model_name=model_name, hypocenter=self.results)
+                    except Exception as exc:
+                        logger.warning(f"Could not auto-save residuals files in {save_dir}: {exc}")
+
                 QMessageBox.information(
                     self,
                     "Files Saved",
-                    f"Successfully saved {len(saved)} relocated SAC files in:\n{save_dir}\n\nOriginal files were NOT modified."
+                    f"Successfully saved {len(saved)} relocated SAC files in:\n{save_dir}\n\n"
+                    f"Also saved residuals.csv and residuals_summary.txt.\nOriginal files were NOT modified."
                 )
             else:
                 QMessageBox.warning(
@@ -1187,6 +1341,9 @@ class SeismicPickerQT(QMainWindow):
         wadati_key = self.config.get("shortcuts", {}).get("open_wadati", "W")
         act_wadati = plugins_menu.addAction(f"&Wadati Analysis ({wadati_key})")  # ty: ignore[unresolved-attribute]
         act_wadati.triggered.connect(self.open_wadati_dialog)  # ty: ignore[unresolved-attribute]
+
+        act_residuals = plugins_menu.addAction("&Residual Diagnostics...")  # ty: ignore[unresolved-attribute]
+        act_residuals.triggered.connect(self.open_residuals_window)  # ty: ignore[unresolved-attribute]
 
         plugins_menu.addSeparator()  # ty: ignore[unresolved-attribute]
         act_open_plugins = plugins_menu.addAction("Open &Plugins Folder")  # ty: ignore[unresolved-attribute]
@@ -4029,6 +4186,67 @@ class SeismicPickerQT(QMainWindow):
         self._wadati_dialog.show()
         self._wadati_dialog.raise_()
         self._wadati_dialog.activateWindow()
+
+    def open_residuals_window(self):
+        """Open or show the interactive residual diagnostics dialog."""
+        residuals = []
+        hypocenter = None
+        model_name = None
+        stats = None
+
+        if hasattr(self, "_hypo71_dialog") and self._hypo71_dialog and self._hypo71_dialog.results:
+            hypocenter = self._hypo71_dialog.results
+            residuals = hypocenter.get("residuals", [])
+            model_name = hypocenter.get("velocity_model_name")
+            stats = hypocenter.get("residuals_stats")
+
+        if not residuals:
+            if not self.picks or len(self.picks) == 0:
+                QMessageBox.warning(
+                    self,
+                    "No Picks Available",
+                    "Please pick arrivals or run earthquake location before opening Residual Diagnostics."
+                )
+                return
+
+            stream = getattr(self, "original_stream", None)
+            try:
+                vmod = utils.load_velocity_model()
+                model_name = vmod.get("name", "1D Model")
+                residuals, stats = utils.calculate_travel_time_residuals(
+                    stream, self.picks, model_name="velocity_model.json"
+                )
+            except Exception as e:
+                QMessageBox.warning(
+                    self,
+                    "Hypocenter Required",
+                    f"Please run earthquake location first to obtain a hypocenter solution.\n\n({e})"
+                )
+                return
+
+        if not residuals:
+            QMessageBox.information(self, "No Residuals", "No travel-time residuals available.")
+            return
+
+        try:
+            try:
+                from residuals_plugin import ResidualDiagnosticsDialog
+            except ImportError:
+                from config.plugins.residuals_plugin import ResidualDiagnosticsDialog
+        except ImportError as exc:
+            QMessageBox.critical(self, "Plugin Error", f"Could not load Residual Diagnostics plugin:\n\n{exc}")
+            return
+
+        self._residuals_dialog = ResidualDiagnosticsDialog(
+            residuals=residuals,
+            hypocenter=hypocenter,
+            model_name=model_name,
+            stats=stats,
+            parent=self,
+        )
+        self._residuals_dialog.show()
+        self._residuals_dialog.raise_()
+        self._residuals_dialog.activateWindow()
 
     def open_documentation_viewer(self, doc="README.md"):
         """Open or show the in-app documentation viewer dialog."""
